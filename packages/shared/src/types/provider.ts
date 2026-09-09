@@ -3,7 +3,7 @@
 import type { ChatMessage, ChatCompletionTool, ChatResponseFormat, ToolChoice, ChatMessageToolCall } from './api.js';
 
 // 빌트인 프로바이더 (메인 코드에 포함)
-export const BUILTIN_PROVIDERS = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi'] as const;
+export const BUILTIN_PROVIDERS = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode'] as const;
 export type BuiltinProviderName = typeof BUILTIN_PROVIDERS[number];
 
 // 플러그인 프로바이더까지 포함하는 동적 타입

@@ -427,6 +427,85 @@ export function createRequestId(): string {
 }
 
 // 플러그인용 기본 파서: 각 라인을 그대로 텍스트 delta로 변환
+// OpenCode JSON 파서 (opencode run --format json)
+// 실제 출력: step_start → reasoning? → text → step_finish(tokens) / error
+export class OpenCodeStreamParser implements StreamParser {
+  parse(line: string): StreamChunk | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+
+    try {
+      const data = JSON.parse(trimmed);
+      if (data.type === 'text' && data.part?.text) {
+        return { type: 'delta', content: data.part.text };
+      }
+      if (data.type === 'step_finish') {
+        const tokens = data.part?.tokens;
+        const usage = tokens ? {
+          promptTokens: tokens.input ?? 0,
+          completionTokens: (tokens.output ?? 0) + (tokens.reasoning ?? 0),
+          totalTokens: tokens.total ?? ((tokens.input ?? 0) + (tokens.output ?? 0)),
+        } : undefined;
+        return { type: 'done', usage };
+      }
+      if (data.type === 'error') {
+        return {
+          type: 'error',
+          error: data.error?.data?.message || data.error?.message || 'OpenCode error',
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  parseEvents(line: string): ProviderEvent[] {
+    const trimmed = line.trim();
+    if (!trimmed) return [];
+
+    try {
+      const data = JSON.parse(trimmed);
+      const events: ProviderEvent[] = [];
+
+      if (data.type === 'reasoning' && data.part?.text) {
+        events.push({ type: 'thinking', text: data.part.text });
+      }
+
+      if (data.type === 'text' && data.part?.text) {
+        events.push({ type: 'text_delta', text: data.part.text });
+      }
+
+      if (data.type === 'step_finish') {
+        const tokens = data.part?.tokens;
+        if (tokens) {
+          events.push({
+            type: 'usage',
+            usage: {
+              promptTokens: tokens.input ?? 0,
+              completionTokens: (tokens.output ?? 0) + (tokens.reasoning ?? 0),
+              totalTokens: tokens.total ?? ((tokens.input ?? 0) + (tokens.output ?? 0)),
+            },
+          });
+        }
+        const finishReason = data.part?.reason === 'stop' ? 'stop' as const : 'stop' as const;
+        events.push({ type: 'done', finishReason });
+      }
+
+      if (data.type === 'error') {
+        events.push({
+          type: 'error',
+          error: data.error?.data?.message || data.error?.message || 'OpenCode error',
+        });
+      }
+
+      return events;
+    } catch {
+      return [];
+    }
+  }
+}
+
 export class PlainTextParser implements StreamParser {
   parse(line: string): StreamChunk | null {
     const trimmed = line.trim();
@@ -454,6 +533,7 @@ parserRegistry.set('agy', () => new PlainTextParser());
 parserRegistry.set('grok', () => new PlainTextParser());
 // KimiProvider가 stream-json assistant 레코드를 직접 처리하므로 fallback 계약용.
 parserRegistry.set('kimi', () => new PlainTextParser());
+parserRegistry.set('opencode', () => new OpenCodeStreamParser());
 
 // 플러그인에서 커스텀 파서를 등록할 때 사용
 export function registerParser(provider: string, factory: () => StreamParser): void {

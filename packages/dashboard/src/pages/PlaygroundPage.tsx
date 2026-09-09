@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useTranslation } from '../i18n/context';
 import {
-  fetchModelMappings,
+  fetchAvailableModels,
   fetchServerInfo,
   fetchHttpProviders,
   effectiveEndpointType,
-  type ModelMapping,
+  type AvailableModel,
   type ReasoningEffort,
   type HttpProviderConfig,
 } from '../api/client';
@@ -22,6 +22,7 @@ const REASONING_SUPPORTED_PROVIDERS = new Set([
   'agy',
   'grok',
   'kimi',
+  'opencode',
 ]);
 
 interface Message {
@@ -99,8 +100,9 @@ export default function PlaygroundPage() {
   const { t } = useTranslation();
 
   // 모델 목록
-  const [models, setModels] = useState<ModelMapping[]>([]);
+  const [models, setModels] = useState<AvailableModel[]>([]);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
+  const [authEnabled, setAuthEnabled] = useState<boolean | null>(null);
   // HTTP 프로바이더 설정 맵 (provider명 → config) — 엔드포인트 타입 판별용
   const [httpProviderMap, setHttpProviderMap] = useState<Record<string, HttpProviderConfig>>({});
 
@@ -153,7 +155,7 @@ export default function PlaygroundPage() {
   const responseRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchModelMappings().then((m) => {
+    fetchAvailableModels().then((m) => {
       const enabled = m.filter((x) => x.enabled);
       setModels(enabled);
       if (enabled.length > 0 && !selectedModel) {
@@ -166,6 +168,9 @@ export default function PlaygroundPage() {
     // API base URL 결정 (Vite 프록시 경유 시 상대 경로 사용)
     fetchServerInfo().then((info) => {
       setApiBaseUrl(`http://${window.location.hostname}:${info.serverPort}`);
+      if (typeof info?.authEnabled === 'boolean') {
+        setAuthEnabled(info.authEnabled);
+      }
     }).catch(() => {
       setApiBaseUrl('');
     });
@@ -207,7 +212,8 @@ export default function PlaygroundPage() {
 
   // 전송
   const handleSend = async () => {
-    if (!selectedModel || !apiKey) return;
+    if (!selectedModel) return;
+    if (authEnabled !== false && !apiKey) return;
     const filteredMessages = messages.filter((m) => m.content.trim());
     if (filteredMessages.length === 0) return;
 
@@ -234,12 +240,15 @@ export default function PlaygroundPage() {
     try {
       // Vite 프록시 경유 (상대 경로)
       const url = '/v1/chat/completions';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
       const res = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
+        headers,
         body: JSON.stringify(buildRequestBody()),
         signal: controller.signal,
       });
@@ -379,7 +388,7 @@ export default function PlaygroundPage() {
       </div>
 
       {/* 모델 + API 키 */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className={authEnabled === false ? 'w-full' : 'grid grid-cols-2 gap-4'}>
         <div>
           <label className={labelCls}>{t('playground.model')}</label>
           <select
@@ -394,20 +403,22 @@ export default function PlaygroundPage() {
             ))}
           </select>
         </div>
-        <div>
-          <label className={labelCls}>{t('playground.apiKey')}</label>
-          <input
-            type="text"
-            value={apiKeyFocused ? apiKey : maskApiKey(apiKey)}
-            onChange={(e) => setApiKey(e.target.value)}
-            onFocus={() => setApiKeyFocused(true)}
-            onBlur={() => setApiKeyFocused(false)}
-            placeholder="sk-proxy-..."
-            autoComplete="off"
-            spellCheck={false}
-            className={`w-full ${inputCls} font-mono`}
-          />
-        </div>
+        {authEnabled !== false && (
+          <div>
+            <label className={labelCls}>{t('playground.apiKey')}</label>
+            <input
+              type="text"
+              value={apiKeyFocused ? apiKey : maskApiKey(apiKey)}
+              onChange={(e) => setApiKey(e.target.value)}
+              onFocus={() => setApiKeyFocused(true)}
+              onBlur={() => setApiKeyFocused(false)}
+              placeholder="sk-proxy-..."
+              autoComplete="off"
+              spellCheck={false}
+              className={`w-full ${inputCls} font-mono`}
+            />
+          </div>
+        )}
       </div>
 
       {/* 비채팅 모델(임베딩/리랭크 등) 안내 — 채팅 호출 불가 */}
@@ -559,7 +570,7 @@ export default function PlaygroundPage() {
         ) : (
           <button
             onClick={handleSend}
-            disabled={!selectedModel || !apiKey || isNonChatModel || messages.every((m) => !m.content.trim())}
+            disabled={!selectedModel || (authEnabled !== false && !apiKey) || isNonChatModel || messages.every((m) => !m.content.trim())}
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors"
           >
             {t('playground.send')}

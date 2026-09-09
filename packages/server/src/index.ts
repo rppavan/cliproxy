@@ -29,7 +29,8 @@ async function main() {
 ╔══════════════════════════════════════════════╗
 ║         star-cliproxy Server Started         ║
 ╠══════════════════════════════════════════════╣
-║  API:        http://${config.server.host}:${config.server.port}       ║
+║  Dashboard:  http://${config.server.host}:${config.server.port}       ║
+║  API:        http://${config.server.host}:${config.server.port}/v1    ║
 ║  Health:     http://${config.server.host}:${config.server.port}/health║
 ║  Admin API:  http://${config.server.host}:${config.server.port}/admin ║
 ╚══════════════════════════════════════════════╝

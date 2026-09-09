@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n/context';
-import { fetchModelMappings, fetchServerInfo, type ModelMapping } from '../api/client';
+import { fetchAvailableModels, fetchServerInfo, type AvailableModel } from '../api/client';
 
 function CodeBlock({ title, lang, children }: { title?: string; lang?: string; children: string }) {
   const [copied, setCopied] = useState(false);
@@ -18,9 +18,9 @@ function CodeBlock({ title, lang, children }: { title?: string; lang?: string; c
       </pre>
       <button
         onClick={handleCopy}
-        className="absolute top-2 right-2 px-2 py-1 text-xs bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 dark:text-gray-300"
+        className="absolute top-2 right-2 px-2.5 py-1 text-xs font-medium rounded-md bg-white/80 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 transition-all opacity-0 group-hover:opacity-100 shadow-sm"
       >
-        {copied ? t('common.copied') : t('common.copy')}
+        {copied ? t('guide.copied') : t('guide.copy')}
       </button>
     </div>
   );
@@ -37,12 +37,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function ApiGuidePage() {
   const { t } = useTranslation();
-  const [models, setModels] = useState<ModelMapping[]>([]);
+  const [models, setModels] = useState<AvailableModel[]>([]);
   const [apiBase, setApiBase] = useState('${apiBase}');
   const [dashboardUrl, setDashboardUrl] = useState('${dashboardUrl}');
 
   useEffect(() => {
-    fetchModelMappings().then(setModels).catch(() => {});
+    fetchAvailableModels().then(setModels).catch(() => {});
     // 서버에서 실제 포트 정보를 가져와서 현재 호스트와 조합
     fetchServerInfo().then((info) => {
       const host = window.location.hostname;

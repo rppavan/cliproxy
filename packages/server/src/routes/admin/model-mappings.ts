@@ -4,6 +4,8 @@ import { nanoid } from 'nanoid';
 import { isReasoningEffort, type ProviderOverrides, type ReasoningEffort } from '@star-cliproxy/shared';
 import { getDatabase } from '../../db/client.js';
 import { modelMappings } from '../../db/schema.js';
+import type { ProviderRegistry } from '../../providers/provider-registry.js';
+import type { ModelCatalog } from '../../services/model-catalog.js';
 
 interface CreateMappingBody {
   alias: string;
@@ -232,11 +234,38 @@ function parseReasoningEffortInput(value: unknown): { ok: true; value: Reasoning
   return { ok: true, value: normalized };
 }
 
-export function registerModelMappingsRoutes(app: FastifyInstance): void {
-  // 목록
-  app.get('/admin/model-mappings', async (_request, reply) => {
+export interface ModelMappingsRouteDeps {
+  registry?: ProviderRegistry;
+  modelCatalog?: ModelCatalog;
+}
+
+export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMappingsRouteDeps): void {
+  // 목록 (기본: 활성화된 프로바이더의 매핑만 반환, ?all=true 시 전체 반환)
+  app.get<{ Querystring: { all?: string } }>('/admin/model-mappings', async (request, reply) => {
     const db = getDatabase();
     const all = await db.select().from(modelMappings);
+    const registry = deps?.registry;
+    let filtered = all;
+    if (registry && request.query?.all !== 'true') {
+      const enabledProviders = new Set(
+        registry
+          .getAll()
+          .filter((p) => registry.getProviderConfig(p.name)?.enabled !== false)
+          .map((p) => p.name),
+      );
+      filtered = all.filter((m) => enabledProviders.has(m.provider));
+    }
+    return reply.send(filtered.map(rowWithParsedOverrides));
+  });
+
+  // 사용 가능한 전체 모델 목록 (대시보드 Playground, Debug, ApiGuide용: 실시간 CLI 모델 + 상단에 별칭 매핑)
+  app.get('/admin/available-models', async (_request, reply) => {
+    if (deps?.modelCatalog) {
+      const models = await deps.modelCatalog.getModels();
+      return reply.send(models);
+    }
+    const db = getDatabase();
+    const all = await db.select().from(modelMappings).where(eq(modelMappings.enabled, true));
     return reply.send(all.map(rowWithParsedOverrides));
   });
 
@@ -290,6 +319,7 @@ export function registerModelMappingsRoutes(app: FastifyInstance): void {
       updatedAt: now,
     });
 
+    deps?.modelCatalog?.invalidateCache();
     const created = await db.select().from(modelMappings).where(eq(modelMappings.id, id)).limit(1);
     return reply.status(201).send(rowWithParsedOverrides(created[0]));
   });
@@ -344,6 +374,7 @@ export function registerModelMappingsRoutes(app: FastifyInstance): void {
     }
 
     await db.update(modelMappings).set(updates).where(eq(modelMappings.id, id));
+    deps?.modelCatalog?.invalidateCache();
 
     const updated = await db.select().from(modelMappings).where(eq(modelMappings.id, id)).limit(1);
     return reply.send(rowWithParsedOverrides(updated[0]));
@@ -360,6 +391,7 @@ export function registerModelMappingsRoutes(app: FastifyInstance): void {
     }
 
     await db.delete(modelMappings).where(eq(modelMappings.id, id));
+    deps?.modelCatalog?.invalidateCache();
     return reply.status(204).send();
   });
 }

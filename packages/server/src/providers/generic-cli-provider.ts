@@ -1,5 +1,5 @@
 import type { ExecuteOptions, ExecuteResult, GenericCliProviderConfig } from '@star-cliproxy/shared';
-import { BaseProvider } from './base-provider.js';
+import { BaseProvider, type ProviderModelInfo } from './base-provider.js';
 import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { registerParser, PlainTextParser } from '../utils/stream-transformer.js';
 
@@ -175,5 +175,28 @@ export class GenericCliProvider extends BaseProvider {
   updateConfig(partial: Partial<GenericCliProviderConfig>): void {
     Object.assign(this.config, partial);
     Object.assign(this.genericConfig, partial);
+  }
+
+  override async listModels(): Promise<ProviderModelInfo[]> {
+    if (this.config.cli_path === 'ollama' || this.config.cli_path.endsWith('/ollama')) {
+      try {
+        const { stdout, exitCode } = await this.runProcess(['list'], undefined, 5000);
+        if (exitCode === 0) {
+          const lines = stdout.split('\n').slice(1);
+          const models: ProviderModelInfo[] = [];
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            if (parts[0]) {
+              models.push({ id: parts[0], name: parts[0] });
+            }
+          }
+          if (models.length > 0) return models;
+        }
+      } catch { /* ignore */ }
+    }
+    if (this.config.default_model) {
+      return [{ id: this.config.default_model, name: this.config.default_model }];
+    }
+    return [];
   }
 }

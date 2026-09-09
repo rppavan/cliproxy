@@ -3,6 +3,7 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import { useTranslation } from './i18n/context';
 import { useTheme } from './theme/context';
 import { useAdminAuth } from './auth/context';
+import { fetchServerInfo } from './api/client';
 import DashboardPage from './pages/DashboardPage';
 import ModelMappingsPage from './pages/ModelMappingsPage';
 import ApiKeysPage from './pages/ApiKeysPage';
@@ -33,10 +34,25 @@ export default function App() {
   const { theme, toggleTheme } = useTheme();
   const { adminToken, saveAdminToken, clearAdminToken } = useAdminAuth();
   const [tokenDraft, setTokenDraft] = useState(adminToken);
+  const [authEnabled, setAuthEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     setTokenDraft(adminToken);
   }, [adminToken]);
+
+  useEffect(() => {
+    fetchServerInfo()
+      .then((info) => {
+        if (typeof info?.authEnabled === 'boolean') {
+          setAuthEnabled(info.authEnabled);
+        }
+      })
+      .catch(() => {
+        // Keep default behavior if fetchServerInfo fails
+      });
+  }, []);
+
+  const isUnlocked = authEnabled === false || Boolean(adminToken);
 
   const handleSaveAdminToken = () => {
     saveAdminToken(tokenDraft);
@@ -115,31 +131,39 @@ export default function App() {
       <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-950 flex flex-col">
         {/* 상단 바 */}
         <div className="flex items-center justify-between gap-4 px-6 pt-4 pb-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="password"
-              value={tokenDraft}
-              onChange={(e) => setTokenDraft(e.target.value)}
-              placeholder={t('auth.adminTokenPlaceholder')}
-              className="w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300"
-            />
-            <button
-              onClick={handleSaveAdminToken}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              {t('auth.saveToken')}
-            </button>
-            {adminToken && (
+          {authEnabled === false ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
+                Auth: Disabled (Local Mode)
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={tokenDraft}
+                onChange={(e) => setTokenDraft(e.target.value)}
+                placeholder={t('auth.adminTokenPlaceholder')}
+                className="w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300"
+              />
               <button
-                onClick={clearAdminToken}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
-                  bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800
-                  text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                onClick={handleSaveAdminToken}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-600 hover:bg-blue-700 text-white"
               >
-                {t('auth.clearToken')}
+                {t('auth.saveToken')}
               </button>
-            )}
-          </div>
+              {adminToken && (
+                <button
+                  onClick={clearAdminToken}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                    bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800
+                    text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  {t('auth.clearToken')}
+                </button>
+              )}
+            </div>
+          )}
           <button
             onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}
             aria-label={lang === 'ko' ? 'Switch to English' : '한국어로 전환'}
@@ -174,7 +198,7 @@ export default function App() {
           </button>
         </div>
         <div className="flex-1 px-6 pb-6">
-          {adminToken ? (
+          {isUnlocked ? (
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/playground" element={<PlaygroundPage />} />

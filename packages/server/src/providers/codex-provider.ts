@@ -1,5 +1,7 @@
 import type { ChatResponseFormat, ExecuteOptions, ExecuteResult, ProviderEvent, ProviderConfigYaml, HealthStatus } from '@star-cliproxy/shared';
-import { BaseProvider } from './base-provider.js';
+import { BaseProvider, type ProviderModelInfo } from './base-provider.js';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { schemaArgument, shouldBufferStream, wantsSchemaEnforcement } from './structured-output.js';
 import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { prepareCodexPrompt } from '../utils/image-extractor.js';
@@ -486,4 +488,135 @@ export class CodexProvider extends BaseProvider {
       this.destroyAppServer();
     }
   }
+
+  override async listModels(): Promise<ProviderModelInfo[]> {
+    // 1. If AppServerProcess is running, request model/list
+    if (this.appServerProcess?.isAlive()) {
+      try {
+        const res = await this.appServerProcess.request<{
+          data?: Array<{ id?: string; model?: string; displayName?: string; description?: string }>;
+        }>('model/list', {}, 5000);
+        if (res?.data && Array.isArray(res.data)) {
+          return res.data
+            .map((item) => ({
+              id: item.id || item.model || '',
+              name: item.displayName || item.id || item.model,
+              description: item.description,
+            }))
+            .filter((m) => m.id);
+        }
+      } catch (err) {
+        console.warn('[codex] failed to query model/list from running app-server:', (err as Error).message);
+      }
+    }
+
+    // 2. Otherwise, attempt a quick stdio query to codex app-server
+    try {
+      const models = await queryCodexAppServerModels(
+        this.config.cli_path,
+        this.getCleanEnv(),
+        this.workingDir,
+      );
+      if (models.length > 0) {
+        return models;
+      }
+    } catch (err) {
+      console.warn('[codex] failed to query codex app-server models:', (err as Error).message);
+    }
+
+    // 3. Fallback to known models
+    const fallbackList: ProviderModelInfo[] = [
+      { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
+      { id: 'gpt-5.5', name: 'GPT-5.5' },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4-mini' },
+      { id: 'gpt-5.4', name: 'GPT-5.4' },
+      { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3-Codex-Spark' },
+    ];
+
+    const defaultModel = this.config.default_model;
+    if (defaultModel && !fallbackList.some((m) => m.id === defaultModel)) {
+      fallbackList.unshift({ id: defaultModel, name: defaultModel });
+    }
+
+    return fallbackList;
+  }
+}
+
+async function queryCodexAppServerModels(
+  cliPath: string,
+  env: Record<string, string | undefined>,
+  workingDir?: string,
+): Promise<ProviderModelInfo[]> {
+  return new Promise<ProviderModelInfo[]>((resolve) => {
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let childProcess: ReturnType<typeof spawn> | null = null;
+
+    const cleanup = (models: ProviderModelInfo[]) => {
+      if (finished) return;
+      finished = true;
+      if (timer) clearTimeout(timer);
+      if (childProcess) {
+        try { childProcess.kill(); } catch { /* ignore */ }
+      }
+      resolve(models);
+    };
+
+    timer = setTimeout(() => {
+      cleanup([]);
+    }, 4000);
+
+    try {
+      childProcess = spawn(cliPath, ['app-server'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: env as NodeJS.ProcessEnv,
+        cwd: workingDir,
+      });
+
+      childProcess.on('error', () => {
+        cleanup([]);
+      });
+
+      childProcess.on('exit', () => {
+        cleanup([]);
+      });
+
+      const rl = createInterface({ input: childProcess.stdout! });
+      rl.on('line', (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        try {
+          const msg = JSON.parse(trimmed);
+          if (msg.id === 1) {
+            childProcess?.stdin?.write(
+              JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'model/list', params: {} }) + '\n',
+            );
+          } else if (msg.id === 2 && msg.result?.data && Array.isArray(msg.result.data)) {
+            const models: ProviderModelInfo[] = msg.result.data
+              .map((item: { id?: string; model?: string; displayName?: string; description?: string }) => ({
+                id: item.id || item.model || '',
+                name: item.displayName || item.id || item.model,
+                description: item.description,
+              }))
+              .filter((m: ProviderModelInfo) => m.id);
+            cleanup(models);
+          }
+        } catch { /* ignore parse error */ }
+      });
+
+      childProcess.stdin?.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { clientInfo: { name: 'cliproxy', version: '1.0' } },
+        }) + '\n',
+      );
+    } catch {
+      cleanup([]);
+    }
+  });
 }

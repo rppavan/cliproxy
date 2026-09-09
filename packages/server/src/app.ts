@@ -1,9 +1,37 @@
+import { existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import type { AppConfig } from '@star-cliproxy/shared';
+
+function findDashboardDist(projectRoot?: string): string | null {
+  const candidates: string[] = [];
+  if (projectRoot) {
+    candidates.push(
+      resolve(projectRoot, 'packages', 'dashboard', 'dist'),
+      resolve(projectRoot, 'dashboard', 'dist'),
+      resolve(projectRoot, 'dist'),
+    );
+  }
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  candidates.push(
+    resolve(currentDir, '..', '..', 'dashboard', 'dist'),
+    resolve(currentDir, '..', '..', '..', 'packages', 'dashboard', 'dist'),
+  );
+
+  for (const dir of candidates) {
+    if (existsSync(resolve(dir, 'index.html'))) {
+      return dir;
+    }
+  }
+  return null;
+}
 import { initDatabase } from './db/client.js';
 import { createProviderRegistry } from './providers/provider-registry.js';
 import { ModelRouter } from './services/router.js';
+import { ModelCatalog } from './services/model-catalog.js';
 import { QueueManager } from './services/queue.js';
 import { RateLimiter } from './middleware/rate-limiter.js';
 import { HealthChecker } from './services/health-checker.js';
@@ -40,9 +68,9 @@ import { loadPlugins } from './plugins/plugin-loader.js';
 import type { ValidationConfig } from '@star-cliproxy/shared';
 
 export async function createApp(config: AppConfig, projectRoot?: string) {
-  // Admin API는 항상 보호
-  if (!config.auth.adminToken) {
-    throw new Error('ADMIN_TOKEN must be set. Set it in .env or config.yaml.');
+  // Admin API auth check (only required when auth is enabled)
+  if (config.auth.enabled && !config.auth.adminToken) {
+    throw new Error('ADMIN_TOKEN must be set when auth is enabled. Set it in .env or config.yaml.');
   }
 
   // DB 초기화
@@ -100,7 +128,8 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
   let currentValidation: ValidationConfig = savedValidation ?? { ...config.validation };
 
   // 서비스
-  const router = new ModelRouter(registry);
+  const modelCatalog = new ModelCatalog(registry);
+  const router = new ModelRouter(registry, modelCatalog);
   const queueManager = new QueueManager();
   const rateLimiter = new RateLimiter(savedRateLimits);
   const healthChecker = new HealthChecker(registry);
@@ -163,6 +192,15 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     // Obsidian Copilot 등이 x-stainless-*, dangerously-allow-browser 등 커스텀 헤더 전송
   });
 
+  // Dashboard UI 정적 파일 서빙 (포트 8300 통합)
+  const dashboardDist = findDashboardDist(projectRoot);
+  if (dashboardDist) {
+    await app.register(fastifyStatic, {
+      root: dashboardDist,
+      prefix: '/',
+    });
+  }
+
   // Health check (인증 불필요)
   app.get('/health', async (_request, reply) => {
     return reply.send({
@@ -179,23 +217,26 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
       serverHost: config.server.host,
       dashboardPort: config.dashboard.port,
       dashboardHost: config.dashboard.host,
+      authEnabled: config.auth.enabled,
     });
   });
 
-  // OpenAI-compatible 라우트 (인증 필요)
+  // OpenAI-compatible 라우트 (/v1/* 엔드포인트 대상 인증)
   if (config.auth.enabled) {
     app.addHook('onRequest', async (request, reply) => {
-      // /health와 /admin은 제외
-      if (request.url === '/health' || request.url.startsWith('/admin')) return;
+      if (!request.url.startsWith('/v1')) return;
       await authMiddleware(request, reply);
     });
   }
 
-  // Admin 라우트 (별도 인증)
-  app.addHook('onRequest', async (request, reply) => {
-    if (!request.url.startsWith('/admin')) return;
-    await adminAuthMiddleware(request, reply, config.auth.adminToken);
-  });
+  // Admin 라우트 (별도 인증 - auth.enabled일 때만 적용)
+  if (config.auth.enabled) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (!request.url.startsWith('/admin')) return;
+      if (request.url === '/admin/server-info') return;
+      await adminAuthMiddleware(request, reply, config.auth.adminToken);
+    });
+  }
 
   // /v1/responses: OpenAI Responses API 호환
   // Obsidian Copilot 등 일부 클라이언트가 이 엔드포인트를 사용
@@ -367,7 +408,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     cache,
     debug,
   });
-  registerModelsRoute(app);
+  registerModelsRoute(app, { modelCatalog });
   registerImageGenerationsRoute(app, {
     router,
     queue: queueManager,
@@ -406,7 +447,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
   });
 
   // Admin 라우트 등록
-  registerModelMappingsRoutes(app);
+  registerModelMappingsRoutes(app, { registry, modelCatalog });
   registerApiKeysRoutes(app);
   registerStatsRoutes(app);
   registerProvidersRoutes(app, {
@@ -466,6 +507,39 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     healthChecker.stop();
     await rateLimiter.destroy();
     clearInterval(cacheCleanupTimer);
+  });
+
+  // SPA fallback 및 404 핸들러
+  app.setNotFoundHandler((request, reply) => {
+    // /v1, /admin, /health가 아닌 GET/HEAD 요청은 대시보드 SPA로 라우팅
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      !request.url.startsWith('/v1') &&
+      !request.url.startsWith('/admin') &&
+      !request.url.startsWith('/health')
+    ) {
+      if (dashboardDist) {
+        return (reply as unknown as { sendFile: (file: string) => void }).sendFile('index.html');
+      }
+      return reply.status(200).type('text/html').send(`<!DOCTYPE html>
+<html>
+  <head><title>star-cliproxy</title></head>
+  <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+    <h2>star-cliproxy Server is Running</h2>
+    <p>Dashboard build not found. Run <code>npm run build</code> to build the dashboard UI.</p>
+    <p><a href="/health">/health</a> | <a href="/admin/server-info">/admin/server-info</a></p>
+  </body>
+</html>`);
+    }
+
+    return reply.status(404).send({
+      error: {
+        message: `Route ${request.method}:${request.url} not found`,
+        type: 'invalid_request_error',
+        param: null,
+        code: 'not_found',
+      },
+    });
   });
 
   return app;

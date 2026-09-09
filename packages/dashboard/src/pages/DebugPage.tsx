@@ -7,7 +7,7 @@ import {
   deleteDebugLog,
   deleteDebugLogsBatch,
   clearDebugLogs,
-  fetchModelMappings,
+  fetchAvailableModels,
   type DebugConfig,
   type DebugLog,
 } from '../api/client';
@@ -300,7 +300,7 @@ export default function DebugPage() {
   useEffect(() => {
     loadConfig();
     loadLogs();
-    fetchModelMappings()
+    fetchAvailableModels()
       .then((mappings) => {
         const aliases = [...new Set(mappings.map((m) => m.alias))];
         setModels(aliases);

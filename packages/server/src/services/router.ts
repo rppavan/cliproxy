@@ -3,6 +3,7 @@ import { BUILTIN_PROVIDERS, isReasoningEffort, type ProviderOverrides, type Reas
 import { getDatabase } from '../db/client.js';
 import { modelMappings } from '../db/schema.js';
 import type { ProviderRegistry } from '../providers/provider-registry.js';
+import type { ModelCatalog } from './model-catalog.js';
 
 export interface ResolvedRoute {
   provider: string;
@@ -45,9 +46,11 @@ function parseExtraBody(raw: string | null | undefined): Record<string, unknown>
 
 export class ModelRouter {
   private registry: ProviderRegistry;
+  private catalog?: ModelCatalog;
 
-  constructor(registry: ProviderRegistry) {
+  constructor(registry: ProviderRegistry, catalog?: ModelCatalog) {
     this.registry = registry;
+    this.catalog = catalog;
   }
 
   // 모델 alias를 provider + actual_model로 해석 (priority순 폴백 포함)
@@ -63,18 +66,8 @@ export class ModelRouter {
       ))
       .orderBy(asc(modelMappings.priority));
 
-    if (mappings.length === 0) {
-      // 매핑이 없으면 alias를 그대로 모델명으로 사용 시도
-      // provider를 alias에서 추론
-      const inferredProvider = this.inferProvider(modelAlias);
-      if (inferredProvider && this.registry.getProviderConfig(inferredProvider)?.enabled !== false) {
-        return [{ provider: inferredProvider, actualModel: modelAlias }];
-      }
-      return [];
-    }
-
     // 활성화된 provider만 필터링
-    return mappings
+    const enabledRoutes = mappings
       .filter((m) => (
         this.registry.has(m.provider)
         && this.registry.getProviderConfig(m.provider)?.enabled !== false
@@ -87,6 +80,33 @@ export class ModelRouter {
         includeReasoning: typeof m.includeReasoning === 'boolean' ? m.includeReasoning : null,
         extraBody: parseExtraBody(m.extraBody),
       }));
+
+    if (enabledRoutes.length > 0) {
+      return enabledRoutes;
+    }
+
+    // 매핑이 없거나 활성 매핑이 없으면, ModelCatalog에서 실시간 CLI 모델 확인
+    if (this.catalog) {
+      const catalogModel = await this.catalog.getModel(modelAlias);
+      if (
+        catalogModel
+        && this.registry.has(catalogModel.provider)
+        && this.registry.getProviderConfig(catalogModel.provider)?.enabled !== false
+      ) {
+        return [{
+          provider: catalogModel.provider,
+          actualModel: catalogModel.actualModel,
+          reasoningEffort: catalogModel.reasoningEffort,
+        }];
+      }
+    }
+
+    // provider를 alias에서 추론
+    const inferredProvider = this.inferProvider(modelAlias);
+    if (inferredProvider && this.registry.has(inferredProvider) && this.registry.getProviderConfig(inferredProvider)?.enabled !== false) {
+      return [{ provider: inferredProvider, actualModel: modelAlias }];
+    }
+    return [];
   }
 
   // 모델명에서 provider 추론 (접두사 기반, 오탐 방지)
@@ -118,6 +138,10 @@ export class ModelRouter {
     // Kimi Code: 공개 alias(kimi-*) 및 CLI provider/model alias(kimi-code/*)
     if (/^kimi(?:-|\/|$)/.test(lower)) {
       return 'kimi';
+    }
+    // OpenCode: opencode, opencode/*, opencode-*, opencodex/*
+    if (/^(opencode|opencodex)(?:-|\/|$)/.test(lower)) {
+      return 'opencode';
     }
     return null;
   }

@@ -177,6 +177,16 @@ providers:
     extra_args: []
     # working_dir: "/path/to/isolated-workspace" # 에이전틱 파일/명령 실행을 고려해 격리 디렉터리 권장
 
+  # OpenCode CLI (`opencode`)
+  # OpenCode headless non-interactive execution with JSON output.
+  opencode:
+    enabled: true
+    cli_path: "opencode"
+    default_model: "opencode/muse-spark-1.3-contributor-free"
+    max_concurrent: 5
+    timeout_ms: 300000
+    extra_args: []
+
 # Tool Bridge Provider (opt-in)
 # 기존 CLI provider 설정을 상속하면서 OpenAI tool_calls만 별도 구조화 출력으로 처리한다.
 # 일반 claude/codex/grok provider 동작에는 영향이 없고, app-server/SDK 상시 실행도 필요하지 않다.
@@ -233,6 +243,8 @@ rate_limits:
     grok:
       rpm: 20
     kimi:
+      rpm: 20
+    opencode:
       rpm: 20
     # claude-tools:
     #   rpm: 10
@@ -338,3 +350,8 @@ model_mappings:
   - alias: "kimi-coding"
     provider: "kimi"
     actual_model: "kimi-code/kimi-for-coding"
+
+  # OpenCode CLI — free models
+  - alias: "opencode-free"
+    provider: "opencode"
+    actual_model: "opencode/muse-spark-1.3-contributor-free"

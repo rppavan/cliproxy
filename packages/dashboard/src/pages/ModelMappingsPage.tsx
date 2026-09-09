@@ -133,7 +133,7 @@ export default function ModelMappingsPage() {
   const [testResult, setTestResult] = useState<TestModelResult | null>(null);
   const [rowTesting, setRowTesting] = useState<string | null>(null);
   const [rowTestResult, setRowTestResult] = useState<{ id: string; result: TestModelResult } | null>(null);
-  const [providerNames, setProviderNames] = useState<string[]>(['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi']);
+  const [providerNames, setProviderNames] = useState<string[]>([]);
   // ephemeral ↔ enable_session_reuse 자동 조정 알림 (3초 후 자동 해제)
   const [overrideMutexNotice, setOverrideMutexNotice] = useState(false);
   const mutexNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

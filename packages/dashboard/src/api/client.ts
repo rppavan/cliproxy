@@ -221,8 +221,27 @@ export interface ModelMapping {
   updatedAt: string;
 }
 
+export interface AvailableModel {
+  id: string;
+  alias: string;
+  provider: string;
+  actualModel: string;
+  displayName: string;
+  isAlias: boolean;
+  enabled: boolean;
+  reasoningEffort?: string;
+  priority?: number;
+  ownedBy?: string;
+}
+
 export function fetchModelMappings() {
   return request<ModelMapping[]>('/model-mappings');
+}
+
+export function fetchAvailableModels(): Promise<AvailableModel[]> {
+  return request<AvailableModel[]>('/available-models').catch(() => {
+    return fetchModelMappings() as unknown as Promise<AvailableModel[]>;
+  });
 }
 
 export function createModelMapping(data: {
@@ -648,6 +667,7 @@ export interface ServerInfo {
   serverHost: string;
   dashboardPort: number;
   dashboardHost: string;
+  authEnabled?: boolean;
 }
 
 export function fetchServerInfo() {

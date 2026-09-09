@@ -143,5 +143,6 @@ describe.sequential('seedDatabase CLI model catalog migration', () => {
       'kimi-coding',
       'kimi-k3',
     ]);
+    expect(aliasesByProvider.get('opencode')).toEqual(['opencode-free']);
   });
 });

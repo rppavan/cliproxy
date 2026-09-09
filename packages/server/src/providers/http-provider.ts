@@ -14,7 +14,7 @@ import type {
   HttpProviderConfig,
   DebugCaptureInfo,
 } from '@star-cliproxy/shared';
-import { BaseProvider } from './base-provider.js';
+import { BaseProvider, type ProviderModelInfo } from './base-provider.js';
 
 /**
  * OpenAI 호환 HTTP API 프로바이더.
@@ -750,6 +750,51 @@ export class HttpProvider extends BaseProvider {
     } catch {
       return 'unhealthy';
     }
+  }
+
+  override async listModels(): Promise<ProviderModelInfo[]> {
+    // 1. OpenAI 호환 /models 엔드포인트
+    try {
+      const url = this.buildUrl('/models');
+      const headers = this.buildHeaders();
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      try {
+        const res = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+        if (res.ok) {
+          const json = (await res.json()) as { data?: Array<{ id: string }> };
+          if (Array.isArray(json?.data) && json.data.length > 0) {
+            return json.data.map((m) => ({ id: m.id, name: m.id }));
+          }
+        }
+      } finally {
+        clearTimeout(t);
+      }
+    } catch { /* ignore */ }
+
+    // 2. Ollama /api/tags 엔드포인트
+    try {
+      const url = this.buildUrl('/api/tags');
+      const headers = this.buildHeaders();
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      try {
+        const res = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+        if (res.ok) {
+          const json = (await res.json()) as { models?: Array<{ name: string }> };
+          if (Array.isArray(json?.models) && json.models.length > 0) {
+            return json.models.map((m) => ({ id: m.name, name: m.name }));
+          }
+        }
+      } finally {
+        clearTimeout(t);
+      }
+    } catch { /* ignore */ }
+
+    if (this.config.default_model) {
+      return [{ id: this.config.default_model, name: this.config.default_model }];
+    }
+    return [];
   }
 }
 

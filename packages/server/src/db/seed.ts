@@ -7,6 +7,7 @@ import { hashApiKey, getKeyPrefix } from '../middleware/auth.js';
 
 const CLI_MODEL_MIGRATION_KEY = 'migration.cli-model-catalog-2026-07';
 const KIMI_CATALOG_MIGRATION_KEY = 'migration.kimi-provider-catalog-2026-07';
+const OPENCODE_CATALOG_MIGRATION_KEY = 'migration.opencode-provider-catalog-2026-09';
 const MAX_AUTOMATIC_MAPPINGS_PER_PROVIDER = 2;
 
 interface SeedMapping {
@@ -27,6 +28,10 @@ const CURRENT_CATALOG_ADDITIONS: SeedMapping[] = [
 const KIMI_CATALOG_ADDITIONS: SeedMapping[] = [
   { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
   { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
+];
+
+const OPENCODE_CATALOG_ADDITIONS: SeedMapping[] = [
+  { alias: 'opencode-free', provider: 'opencode', actual_model: 'opencode/muse-spark-1.3-contributor-free' },
 ];
 
 async function insertAutomaticCatalogMappings(
@@ -180,6 +185,25 @@ async function seedKimiCatalog(): Promise<void> {
   });
 }
 
+async function seedOpencodeCatalog(): Promise<void> {
+  const db = getDatabase();
+  const alreadyApplied = await db
+    .select({ key: settings.key })
+    .from(settings)
+    .where(eq(settings.key, OPENCODE_CATALOG_MIGRATION_KEY))
+    .limit(1);
+  if (alreadyApplied.length > 0) return;
+
+  const now = new Date().toISOString();
+  await insertAutomaticCatalogMappings(OPENCODE_CATALOG_ADDITIONS, now);
+
+  await db.insert(settings).values({
+    key: OPENCODE_CATALOG_MIGRATION_KEY,
+    value: now,
+    updatedAt: now,
+  });
+}
+
 export async function seedDatabase(config: AppConfig): Promise<void> {
   const db = getDatabase();
 
@@ -213,6 +237,7 @@ export async function seedDatabase(config: AppConfig): Promise<void> {
   // [followup] config에서 제거/수정한 매핑은 자동 삭제·갱신되지 않는다(추가만). 정리는 대시보드에서.
   await migrateBuiltinCliMappings();
   await seedKimiCatalog();
+  await seedOpencodeCatalog();
 
   const existingMappings = await db
     .select({ alias: modelMappings.alias })

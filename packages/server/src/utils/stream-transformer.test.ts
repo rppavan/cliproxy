@@ -3,6 +3,7 @@ import {
   ClaudeStreamParser,
   CodexStreamParser,
   GeminiStreamParser,
+  OpenCodeStreamParser,
   PlainTextParser,
   formatAsSSE,
   createRequestId,
@@ -244,11 +245,74 @@ describe('createRequestId', () => {
   });
 });
 
+describe('OpenCodeStreamParser', () => {
+  const parser = new OpenCodeStreamParser();
+
+  it('text 이벤트에서 delta 추출', () => {
+    const line = JSON.stringify({
+      type: 'text',
+      part: { type: 'text', text: 'Hello from OpenCode' },
+    });
+    const result = parser.parse(line);
+    expect(result).toEqual({ type: 'delta', content: 'Hello from OpenCode' });
+
+    const events = parser.parseEvents(line);
+    expect(events).toEqual([{ type: 'text_delta', text: 'Hello from OpenCode' }]);
+  });
+
+  it('reasoning 이벤트에서 thinking 추출', () => {
+    const line = JSON.stringify({
+      type: 'reasoning',
+      part: { type: 'reasoning', text: 'Thinking step' },
+    });
+    const events = parser.parseEvents(line);
+    expect(events).toEqual([{ type: 'thinking', text: 'Thinking step' }]);
+  });
+
+  it('step_finish에서 done과 usage 추출', () => {
+    const line = JSON.stringify({
+      type: 'step_finish',
+      part: {
+        type: 'step-finish',
+        reason: 'stop',
+        tokens: { input: 100, output: 50, reasoning: 10, total: 150 },
+      },
+    });
+    const result = parser.parse(line);
+    expect(result).toEqual({
+      type: 'done',
+      usage: { promptTokens: 100, completionTokens: 60, totalTokens: 150 },
+    });
+
+    const events = parser.parseEvents(line);
+    expect(events).toEqual([
+      {
+        type: 'usage',
+        usage: { promptTokens: 100, completionTokens: 60, totalTokens: 150 },
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+  });
+
+  it('error 이벤트에서 error 추출', () => {
+    const line = JSON.stringify({
+      type: 'error',
+      error: { data: { message: 'Rate limit exceeded' } },
+    });
+    const result = parser.parse(line);
+    expect(result).toEqual({ type: 'error', error: 'Rate limit exceeded' });
+
+    const events = parser.parseEvents(line);
+    expect(events).toEqual([{ type: 'error', error: 'Rate limit exceeded' }]);
+  });
+});
+
 describe('getParserForProvider', () => {
   it('각 provider에 맞는 파서 반환', () => {
     expect(getParserForProvider('claude')).toBeInstanceOf(ClaudeStreamParser);
     expect(getParserForProvider('codex')).toBeInstanceOf(CodexStreamParser);
     expect(getParserForProvider('gemini')).toBeInstanceOf(GeminiStreamParser);
+    expect(getParserForProvider('opencode')).toBeInstanceOf(OpenCodeStreamParser);
   });
 
   it('알 수 없는 provider는 PlainTextParser로 폴백', () => {

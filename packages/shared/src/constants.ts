@@ -1,5 +1,5 @@
 export const DEFAULT_SERVER_PORT = 8300;
-export const DEFAULT_DASHBOARD_PORT = 5300;
+export const DEFAULT_DASHBOARD_PORT = 8300;
 export const DEFAULT_HOST = '127.0.0.1';
 
 export const API_KEY_PREFIX = 'sk-proxy-';
@@ -14,7 +14,7 @@ export const DEFAULT_CACHE_MAX_ENTRIES = 1000;
 export const DEFAULT_RATE_LIMIT_RPM = 60;
 export const DEFAULT_RATE_LIMIT_RPD = 1000;
 
-export const PROVIDER_NAMES = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi'] as const;
+export const PROVIDER_NAMES = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode'] as const;
 
 // 입력 검증 기본값 (파워 유저 기본값)
 export const DEFAULT_MAX_MESSAGE_COUNT = 800;

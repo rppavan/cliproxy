@@ -41,6 +41,12 @@ export function getActiveProcessCount(): number {
   return activeProcesses.size;
 }
 
+export interface ProviderModelInfo {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
 export abstract class BaseProvider {
   abstract readonly name: string;
 
@@ -63,6 +69,14 @@ export abstract class BaseProvider {
 
   getConfig(): ProviderConfigYaml {
     return { ...this.config };
+  }
+
+  // 프로바이더가 제공하는 실제 모델 목록 (서브클래스에서 CLI/API 조회 오버라이드)
+  async listModels(): Promise<ProviderModelInfo[]> {
+    if (this.config.default_model) {
+      return [{ id: this.config.default_model, name: this.config.default_model }];
+    }
+    return [];
   }
 
   /**

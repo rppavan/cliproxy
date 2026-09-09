@@ -132,6 +132,8 @@ const BUILTIN_DEFAULTS: Record<string, { cliPath: string; defaultModel: string }
   grok: { cliPath: 'grok', defaultModel: 'grok-4.5' },
   // Moonshot AI Kimi Code CLI. 모든 회원에게 제공되는 coding 모델을 안전한 기본값으로 사용.
   kimi: { cliPath: 'kimi', defaultModel: 'kimi-code/kimi-for-coding' },
+  // OpenCode CLI (`opencode`)
+  opencode: { cliPath: 'opencode', defaultModel: 'opencode/muse-spark-1.3-contributor-free' },
 };
 
 export function loadConfig(configPath?: string): AppConfig {
@@ -242,7 +244,7 @@ export function loadConfig(configPath?: string): AppConfig {
       port: server?.port ?? DEFAULT_SERVER_PORT,
       host: server?.host ?? DEFAULT_HOST,
       cors: {
-        origins: server?.cors?.origins ?? [`http://localhost:${DEFAULT_DASHBOARD_PORT}`],
+        origins: server?.cors?.origins ?? [`http://localhost:${dashboard?.port ?? DEFAULT_DASHBOARD_PORT}`, 'http://localhost:5300', 'http://localhost:8300'],
       },
     },
     dashboard: {
@@ -307,6 +309,8 @@ export function loadConfig(configPath?: string): AppConfig {
       // Moonshot AI Kimi Code — 최상위 K3 + 범용 coding 모델
       { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
       { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
+      // OpenCode CLI
+      { alias: 'opencode-free', provider: 'opencode', actual_model: 'opencode/muse-spark-1.3-contributor-free' },
     ],
   };
 }

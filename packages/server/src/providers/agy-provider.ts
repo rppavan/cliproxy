@@ -1,5 +1,5 @@
 import type { ChatResponseFormat, ExecuteOptions, ExecuteResult, ProviderConfigYaml, ProviderEvent, TokenUsage } from '@star-cliproxy/shared';
-import { BaseProvider, gracefulKill, trackProcess } from './base-provider.js';
+import { BaseProvider, gracefulKill, trackProcess, type ProviderModelInfo } from './base-provider.js';
 import { requireStructuredOutput, schemaArgument, wantsSchemaEnforcement } from './structured-output.js';
 import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { spawn } from 'node:child_process';
@@ -381,5 +381,40 @@ export class AgyProvider extends BaseProvider {
         });
       });
     });
+  }
+
+  override async listModels(): Promise<ProviderModelInfo[]> {
+    const models: ProviderModelInfo[] = [];
+    try {
+      const { stdout, exitCode } = await this.runProcess(['models'], undefined, 10_000);
+      if (exitCode === 0) {
+        const lines = stdout.split('\n');
+        for (const rawLine of lines) {
+          const line = stripAnsi(rawLine).trim();
+          if (!line || line.startsWith('Fetching')) continue;
+          const tabParts = line.split('\t');
+          if (tabParts.length >= 2) {
+            const id = tabParts[0].trim();
+            const name = tabParts.slice(1).join(' ').trim();
+            if (id) models.push({ id, name });
+          } else {
+            const match = line.match(/^(\S+)\s+(.+)$/);
+            if (match) {
+              models.push({ id: match[1].trim(), name: match[2].trim() });
+            } else if (line) {
+              models.push({ id: line, name: line });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[agy] failed to list models via CLI:', (err as Error).message);
+    }
+
+    const defaultModel = this.config.default_model || 'antigravity';
+    if (!models.some((m) => m.id === defaultModel)) {
+      models.unshift({ id: defaultModel, name: defaultModel });
+    }
+    return models;
   }
 }

@@ -1,5 +1,7 @@
 import type { ChatResponseFormat, ExecuteOptions, ExecuteResult, ProviderEvent, ProviderConfigYaml, HealthStatus } from '@star-cliproxy/shared';
-import { BaseProvider } from './base-provider.js';
+import { BaseProvider, type ProviderModelInfo } from './base-provider.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { requireStructuredOutput, schemaArgument, shouldBufferStream, wantsSchemaEnforcement } from './structured-output.js';
 import { convertMessages } from '../utils/message-converter.js';
 import { executeSdk, executeStreamSdk, type SdkExecutorConfig, type SdkMeta } from './claude-sdk-executor.js';
@@ -292,5 +294,60 @@ export class ClaudeProvider extends BaseProvider {
       this.sessionManager.destroy();
       this.sessionManager = null;
     }
+  }
+
+  override async listModels(): Promise<ProviderModelInfo[]> {
+    const models: ProviderModelInfo[] = [];
+    const seen = new Set<string>();
+
+    // 1. ~/.claude/settings.json 확인
+    try {
+      const home = process.env.CLAUDE_CONFIG_DIR || process.env.HOME;
+      if (home) {
+        const settingsPath = join(home, home.endsWith('.claude') ? 'settings.json' : '.claude/settings.json');
+        const raw = await readFile(settingsPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed.model && typeof parsed.model === 'string') {
+          const id = parsed.model.replace(/\[.*?\]/, '').trim();
+          if (id && !seen.has(id)) {
+            seen.add(id);
+            models.push({ id, name: id });
+          }
+        }
+        if (parsed.modelSettings && typeof parsed.modelSettings === 'object') {
+          for (const key of Object.keys(parsed.modelSettings)) {
+            if (key && !seen.has(key)) {
+              seen.add(key);
+              models.push({ id: key, name: key });
+            }
+          }
+        }
+      }
+    } catch { /* ignore error reading settings */ }
+
+    // 2. Claude Code 공식 지원 모델들 추가
+    const standardModels = [
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6-thinking',
+      'sonnet',
+      'opus',
+      'haiku',
+    ];
+    for (const m of standardModels) {
+      if (!seen.has(m)) {
+        seen.add(m);
+        models.push({ id: m, name: m });
+      }
+    }
+
+    const defaultModel = this.config.default_model;
+    if (defaultModel && !seen.has(defaultModel)) {
+      models.unshift({ id: defaultModel, name: defaultModel });
+    }
+
+    return models;
   }
 }
