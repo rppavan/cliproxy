@@ -1,4 +1,4 @@
 @import "tailwindcss";
 
-/* Tailwind v4: class 기반 다크 모드 설정 */
+/* Tailwind v4 class-based dark mode */
 @custom-variant dark (&:where(.dark, .dark *));

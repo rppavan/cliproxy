@@ -11,7 +11,7 @@ const baseConfig: HttpProviderConfig = {
   display_name: 'Test HTTP',
 };
 
-// fetch 모킹 헬퍼: 응답 JSON과 캡처된 요청 body를 반환
+// Mock fetch helper: returns response JSON and captured request body
 function mockFetch(responseBody: unknown) {
   const captured: { body?: any } = {};
   const fn = vi.fn(async (_url: string, init: any) => {
@@ -136,7 +136,7 @@ describe('HttpProvider.execute - function calling', () => {
 });
 
 describe('HttpProvider.executeStream - function calling', () => {
-  // SSE 스트림을 ReadableStream으로 모킹
+  // Mock SSE stream as ReadableStream
   function mockStream(lines: string[]) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -185,8 +185,8 @@ describe('HttpProvider.executeStream - function calling', () => {
       start(controller) {
         controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n'));
         controller.enqueue(encoder.encode('data: [DONE]\n'));
-        // [DONE] 이후 추가 바이트: generator가 done에서 return하면 소비되면 안 됨.
-        // close()를 호출하지 않으므로 명시적 cancel()이 없으면 스트림이 열린 채 유지된다.
+        // Additional bytes after [DONE] should not be consumed when generator returns on done.
+        // Without explicit cancel(), stream remains open since close() is not called.
         controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"leak"}}]}\n'));
       },
       cancel() {
@@ -218,7 +218,7 @@ describe('HttpProvider.executeRerank - 업스트림 규격 협상', () => {
     default_model: 'bge-reranker',
   };
 
-  /** 요청 body에 따라 응답을 달리하는 fetch 모킹. 보낸 body들을 순서대로 기록한다. */
+  /** Mocks fetch with dynamic responses based on request body, recording requests in sequence. */
   function mockRerankUpstream(
     respond: (body: any) => { status: number; payload: unknown },
   ) {
@@ -238,13 +238,13 @@ describe('HttpProvider.executeRerank - 업스트림 규격 협상', () => {
     return sent;
   }
 
-  /** TEI 규격만 받는 업스트림 (`texts` 없으면 400) */
+  /** Upstream accepting only TEI format (400 if `texts` missing) */
   const teiUpstream = (body: any) =>
     Array.isArray(body.texts)
       ? { status: 200, payload: [{ index: 1, score: 0.9 }, { index: 0, score: 0.1 }] }
       : { status: 400, payload: { error: { message: 'texts is required' } } };
 
-  /** OpenAI 호환 규격만 받는 업스트림 (cliproxy 체인 — model/documents 없으면 400) */
+  /** Upstream accepting only OpenAI-compatible format (cliproxy chain - 400 if model/documents missing) */
   const openaiUpstream = (body: any) =>
     body.model && Array.isArray(body.documents)
       ? {
@@ -283,10 +283,10 @@ describe('HttpProvider.executeRerank - 업스트림 규격 협상', () => {
     const r = await provider.executeRerank(rerankOptions);
 
     expect(sent).toHaveLength(2);
-    expect(sent[0]).toEqual({ query: 'q', texts: ['a', 'b'] }); // 1차: TEI
+    expect(sent[0]).toEqual({ query: 'q', texts: ['a', 'b'] }); // Attempt 1: TEI
     expect(sent[1]).toEqual({ model: 'bge-reranker', query: 'q', documents: ['a', 'b'] });
     expect(r.results.map((x) => x.index)).toEqual([1, 0]);
-    expect(r.usage.totalTokens).toBe(13); // 업스트림 usage를 그대로 사용
+    expect(r.usage.totalTokens).toBe(13); // Use upstream usage directly
   });
 
   it('통한 규격을 기억해 두 번째 호출부터는 왕복 1회', async () => {
@@ -297,7 +297,7 @@ describe('HttpProvider.executeRerank - 업스트림 규격 협상', () => {
     expect(sent).toHaveLength(2);
 
     await provider.executeRerank(rerankOptions);
-    expect(sent).toHaveLength(3); // 2회가 아니라 1회만 추가
+    expect(sent).toHaveLength(3); // Single additional round-trip instead of 2
     expect(sent[2].model).toBe('bge-reranker');
   });
 
@@ -376,12 +376,12 @@ describe('HttpProvider - structured output (response_format)', () => {
     const captured = mockFetch({ choices: [{ message: { content: 'x' } }] });
     const provider = new HttpProvider('test', { ...baseConfig });
 
-    // 스트리밍 body 빌드만 검증하면 되므로 첫 청크 수신 후 즉시 중단한다.
+    // Abort after receiving first chunk as only the request body construction is under test
     const iterator = provider.executeStream(makeOptions({ stream: true, chatResponseFormat: { type: 'json_object' } }));
     try {
       for await (const _event of iterator) break;
     } catch {
-      // mock 응답은 SSE가 아니므로 파싱 실패는 무시 — 검증 대상은 요청 body다.
+      // Mock response is not SSE, so ignore parse errors since request body is the test target
     }
 
     expect(captured.body.response_format).toEqual({ type: 'json_object' });

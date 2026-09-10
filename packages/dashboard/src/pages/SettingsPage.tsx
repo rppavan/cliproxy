@@ -80,7 +80,6 @@ export default function SettingsPage() {
     return !isNaN(val) && val !== settings[f.key];
   });
 
-  // Export/Import 상태
   const [exporting, setExporting] = useState(false);
   const [importPreview, setImportPreview] = useState<ExportData | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -127,7 +126,7 @@ export default function SettingsPage() {
       }
     };
     reader.readAsText(file);
-    // input 초기화 (같은 파일 재선택 가능)
+    // Reset input to allow selecting the same file consecutively.
     e.target.value = '';
   };
 
@@ -141,7 +140,7 @@ export default function SettingsPage() {
       const result = await importConfig(importPreview);
       setImportResult(result);
       setImportPreview(null);
-      // validation 설정이 변경되었을 수 있으므로 다시 로드
+      // Reload validation settings to reflect imported configuration.
       const s = await fetchValidationSettings();
       setSettings(s);
       setDraft(Object.fromEntries(FIELDS.map((f) => [f.key, String(s[f.key])])));
@@ -163,7 +162,6 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* 유효성 검사 설정 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -226,7 +224,6 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* 데이터 관리 (Export/Import) */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
         <div className="mb-4">
           <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{t('settings.dataManagement')}</h3>
@@ -257,7 +254,6 @@ export default function SettingsPage() {
           />
         </div>
 
-        {/* Import 미리보기 */}
         {importPreview && (
           <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
             <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{t('settings.importSummary')}</h4>
@@ -291,7 +287,6 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Import 결과 */}
         {importResult && (
           <div className="mt-4 border border-green-200 dark:border-green-500/30 bg-green-50 dark:bg-green-500/10 rounded-lg p-4 space-y-2">
             <h4 className="text-sm font-semibold text-green-700 dark:text-green-400">{t('settings.importSuccess')}</h4>

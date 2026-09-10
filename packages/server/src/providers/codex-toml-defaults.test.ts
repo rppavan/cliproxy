@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-// 내부 헬퍼 동작 검증을 위해 모듈을 동적 import 후 정규식 동작을 그대로 재현.
-// (실제 ~/.codex/config.toml 파일은 환경 의존이라 직접 테스트하지 않고 텍스트 단위로 검증)
+// Replicate regex extraction to test parsing logic in isolation from filesystem state.
 
 function extractTopLevelString(content: string, key: string): string | null {
   const headEnd = content.search(/^\s*\[/m);

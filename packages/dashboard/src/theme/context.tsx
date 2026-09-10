@@ -1,4 +1,3 @@
-// 다크/라이트 모드 React Context + Provider + useTheme hook
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 
 type Theme = 'dark' | 'light';
@@ -18,7 +17,7 @@ function getInitialTheme(): Theme {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'dark' || stored === 'light') return stored;
   } catch {
-    // localStorage 접근 실패 시 기본값 사용
+    // Fall back to default if storage is unavailable
   }
   return 'dark';
 }
@@ -35,7 +34,6 @@ function applyThemeToDocument(theme: Theme) {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(getInitialTheme);
 
-  // 초기 테마 적용
   useEffect(() => {
     applyThemeToDocument(theme);
   }, [theme]);
@@ -45,7 +43,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE_KEY, newTheme);
     } catch {
-      // localStorage 저장 실패 무시
+      // Ignore storage write errors
     }
   }, []);
 

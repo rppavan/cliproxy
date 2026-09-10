@@ -1,6 +1,6 @@
-// codex app-server 동시성 테스트 (#24)
-// 같은 clientKey+model 동시 요청 시 단일 프로세스 공유 + threadId-only 알림 필터로
-// 응답 텍스트가 교차 오염되거나 조기 종료되는 버그를 재현/방지한다.
+// Codex app-server concurrency tests (#24).
+// Verify that concurrent requests with the same clientKey+model sharing a process
+// do not cross-contaminate responses or terminate prematurely.
 
 import { describe, it, expect, afterEach } from 'vitest';
 import type { ExecuteOptions, ProviderEvent } from '@star-cliproxy/shared';
@@ -27,10 +27,10 @@ function usageBlock() {
   };
 }
 
-// 실제 codex app-server의 JSON-RPC stdio 동작을 재현하는 mock:
-// - 알림은 등록된 전체 핸들러에 브로드캐스트 (프로세스 공유와 동일)
-// - turn/start마다 프롬프트 기반 응답을 청크 단위로 비동기 방출
-// - 같은 thread에 turn이 동시에 들어오면 알림이 교차 방출됨 (버그 재현 조건)
+// Mock replicating Codex app-server JSON-RPC stdio behavior:
+// - Notifications broadcast to all registered handlers (matches shared process behavior)
+// - Emits chunked asynchronous responses per turn/start
+// - Concurrent turns on the same thread interleave notifications (reproduction condition)
 class MockAppServer {
   private handlers = new Map<string, Set<(params: unknown) => void>>();
   private threadCounter = 0;
@@ -38,7 +38,6 @@ class MockAppServer {
   private activeTurnsByThread = new Map<string, number>();
   private activeTurnsTotal = 0;
 
-  // 동시성 관측 지표
   maxConcurrentTurnsPerThread = 0;
   maxConcurrentTurnsTotal = 0;
 
@@ -75,7 +74,7 @@ class MockAppServer {
       const threadId = p.threadId as string;
       const input = p.input as Array<{ text: string }>;
       const promptText = input[0]?.text ?? '';
-      // fire-and-forget: 실제 서버처럼 응답 후 알림을 비동기로 방출
+      // Emits notifications asynchronously after response to match real app-server behavior.
       void this.runTurn(threadId, `turn-${++this.turnCounter}`, promptText);
       return {};
     }
@@ -88,7 +87,7 @@ class MockAppServer {
     }
   }
 
-  // 프롬프트에서 결정적으로 응답 생성: "echo(<prompt>)" — turn 할당 순서와 무관하게 검증 가능
+  // Deterministically echo prompt text so assertions succeed regardless of turn execution order.
   private async runTurn(threadId: string, turnId: string, promptText: string): Promise<void> {
     const active = (this.activeTurnsByThread.get(threadId) ?? 0) + 1;
     this.activeTurnsByThread.set(threadId, active);
@@ -174,7 +173,7 @@ describe('codex app-server 동시성 (#24)', () => {
   it('non-stream: 같은 clientKey+model 동시 요청이 서로의 응답을 오염시키지 않는다', async () => {
     const proc = new MockAppServer();
     sessionManager = new CodexAppServerSessionManager();
-    // 같은 스레드를 공유하도록 사전 시드 (세션 재사용 시나리오)
+    // Pre-seed shared thread to simulate session reuse scenario.
     sessionManager.set('client-1', 'thread-shared', MODEL);
 
     const [resultA, resultB] = await Promise.all([
@@ -231,7 +230,7 @@ describe('codex app-server 동시성 (#24)', () => {
   it('다른 thread의 turn은 여전히 병렬 실행된다 (과잉 직렬화 방지)', async () => {
     const proc = new MockAppServer();
     sessionManager = new CodexAppServerSessionManager();
-    // 서로 다른 clientKey → 각자 새 thread 생성 → 병렬 허용
+    // Different clientKeys create distinct threads, allowing parallel execution.
     const [resultA, resultB] = await Promise.all([
       executeAppServer(createOptions('prompt-A'), createConfig(proc, sessionManager, 'client-1')),
       executeAppServer(createOptions('prompt-B'), createConfig(proc, sessionManager, 'client-2')),

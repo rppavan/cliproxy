@@ -17,6 +17,6 @@ export function setStoredAdminToken(token: string): void {
       localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
     }
   } catch {
-    // localStorage 저장 실패 무시
+    // Ignore storage write errors (e.g. disabled storage or quota exceeded).
   }
 }

@@ -8,12 +8,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-// macOS ARG_MAX = 1MB. 여유 두어 800KB 한도 (agy-provider와 동일 기준).
-// 짧은 프롬프트는 -p <arg>, 큰 프롬프트는 --prompt-file을 사용한다.
+// macOS ARG_MAX is 1MB; bounded to 800KB.
+// Short prompts pass via `-p <arg>`; large prompts use `--prompt-file`.
 const MAX_PROMPT_ARG_BYTES = 800_000;
 
-// 8-bit ANSI escape sequences 제거 (terminal color, cursor codes 등).
-// JSON 응답 문자열에 ANSI 코드가 섞인 경우를 방어적으로 처리한다.
+// Strip ANSI escape sequences in case terminal color or cursor codes pollute JSON output.
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
 function stripAnsi(text: string): string {
@@ -37,7 +36,7 @@ interface GrokJsonResult {
   type?: string;
   data?: string;
   text?: string;
-  // --json-schema로 요청했을 때만 채워지는 스키마 준수 값. 버전에 따라 표기가 갈려 둘 다 읽는다.
+  // Schema-compliant value populated only when requested with --json-schema; casing varies by version.
   structuredOutput?: unknown;
   structured_output?: unknown;
   error?: string;
@@ -46,7 +45,7 @@ interface GrokJsonResult {
   usage?: GrokUsage;
 }
 
-// grok 버전에 따라 camelCase/snake_case가 갈리므로 둘 다 확인한다.
+// Check both camelCase and snake_case to support different grok CLI versions.
 function grokStructuredOutput(result: GrokJsonResult): unknown {
   return result.structuredOutput ?? result.structured_output;
 }
@@ -117,17 +116,16 @@ function normalizeEffort(effort: ExecuteOptions['reasoningEffort']): 'low' | 'me
 }
 
 /**
- * xAI Grok Build CLI (`grok`, "Grok Build TUI") provider — v0.2.112 기준.
+ * xAI Grok Build CLI (`grok`, "Grok Build TUI") provider.
  *
- * 동작:
- *  - 헤드리스 단발 실행: `grok -m <model> -p <prompt> --output-format json`.
- *  - -m/--model 지원 → 매핑된 actual_model을 실제로 전달 (agy와의 핵심 차이).
- *    `grok models`(0.2.112, 기본 카탈로그): `grok-4.5`.
- *  - grok-4.5 --effort는 low|medium|high 지원. xhigh|max는 high로 정규화한다.
- *  - --output-format json|streaming-json을 사용해 실제 token usage와 text/thought delta를 보존한다.
- *  - 800KB 초과 prompt는 --prompt-file로 전달해 OS ARG_MAX 제한을 우회한다.
- *  - 세션 연속성은 매 호출 신규 (-c/--continue, -r/--resume은 사용자가 extra_args로만 옵트인).
- *  - --always-approve 등 권한 우회 플래그는 보안 영향이 커서 기본 미포함, extra_args로 옵트인.
+ * Behavior:
+ *  - Headless one-shot execution: `grok -m <model> -p <prompt> --output-format json`.
+ *  - Supports -m/--model to forward actual_model.
+ *  - grok-4.5 --effort supports low|medium|high; maps xhigh|max to high.
+ *  - Preserves token usage and text/thought deltas via --output-format json|streaming-json.
+ *  - Prompts over 800KB use --prompt-file to circumvent OS ARG_MAX limits.
+ *  - Session continuity defaults to fresh invocations unless opted in via extra_args.
+ *  - Permission bypass flags (e.g. --always-approve) are excluded by default for security.
  */
 export class GrokProvider extends BaseProvider {
   readonly name = 'grok' as const;
@@ -137,12 +135,11 @@ export class GrokProvider extends BaseProvider {
     this.initParser();
   }
 
-  // grok CLI는 `-m <model> -p <prompt>` 형태로 단발 실행. messages는 단일 텍스트로 직렬화.
   private buildCommonArgs(options: ExecuteOptions, outputFormat: 'json' | 'streaming-json'): string[] {
     const model = options.model || this.config.default_model;
     const extraArgs = withoutValueFlag(this.config.extra_args, ['--output-format']);
 
-    // 사용자가 extra_args에 --effort 또는 --reasoning-effort를 이미 넣었으면 건너뛴다.
+    // Skip if --effort or --reasoning-effort is already specified in extra_args.
     const userHasEffort = hasFlag(this.config.extra_args, ['--effort', '--reasoning-effort']);
     const effort = normalizeEffort(options.reasoningEffort);
     const effortArgs = effort && !userHasEffort
@@ -154,8 +151,8 @@ export class GrokProvider extends BaseProvider {
       : ['--no-auto-update'];
     const modelArgs = model ? ['-m', model] : [];
 
-    // OpenAI response_format.json_schema → grok --json-schema (중첩 schema만).
-    // 사용자가 extra_args로 스키마를 고정했다면 --model/--effort와 같은 정책으로 그 값을 존중한다.
+    // OpenAI response_format.json_schema maps to grok --json-schema.
+    // Respect explicit --json-schema if already configured in extra_args.
     const schemaArg = schemaArgument(options.chatResponseFormat);
     const userHasSchema = hasFlag(this.config.extra_args, ['--json-schema']);
     const schemaArgs = schemaArg && !userHasSchema ? ['--json-schema', schemaArg] : [];
@@ -208,7 +205,6 @@ export class GrokProvider extends BaseProvider {
     };
   }
 
-  // json 결과를 사용해 실제 usage와 CLI 오류를 보존한다.
   override async execute(options: ExecuteOptions): Promise<ExecuteResult> {
     const invocation = await this.prepareInvocation({ ...options, stream: false }, 'json');
     const { args } = invocation;
@@ -233,7 +229,7 @@ export class GrokProvider extends BaseProvider {
       throw new Error(`grok CLI failed: ${result.message || result.error || 'unknown error'}`);
     }
 
-    // 스키마를 요청했으면 텍스트가 아니라 구조화 출력을 정본으로 쓴다.
+    // Use structured output as authoritative content when schema enforcement was requested.
     const content = wantsSchemaEnforcement(options.chatResponseFormat)
       ? requireStructuredOutput(grokStructuredOutput(result), 'grok', 'structuredOutput')
       : stripAnsi(result.text ?? result.data ?? '').trim();
@@ -244,15 +240,14 @@ export class GrokProvider extends BaseProvider {
     };
   }
 
-  // grok은 --json-schema로 스키마만 강제할 수 있다. json_object/text는 강제 수단이 없다.
+  // Grok CLI only supports enforcing json_schema; json_object and text modes have no CLI flags.
   override supportsResponseFormat(format: ChatResponseFormat): boolean {
     return format.type === 'json_schema';
   }
 
-  // streaming-json의 text/thought/end 이벤트를 실제 ProviderEvent로 변환한다.
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
-    // 스키마 요청은 완성된 구조화 값 1회 emit으로 통일한다 (structured-output.ts 주석 참고).
-    // grok의 delta는 JSON 조각이라 이어붙이면 유효하지만, CLI마다 동작이 갈리므로 버퍼링한다.
+    // Emit schema requests once as a complete structured payload (see structured-output.ts).
+    // Buffer stream chunks to ensure consistent structured output delivery across CLI versions.
     if (shouldBufferStream(options.chatResponseFormat)) {
       const result = await this.execute({ ...options, stream: false });
       yield { type: 'text_delta', text: result.content };
@@ -350,7 +345,7 @@ export class GrokProvider extends BaseProvider {
     }
   }
 
-  // BaseProvider.runProcess는 private이라 재사용 불가 → 동일 패턴 인라인 구현 (agy-provider와 동일).
+  // Inlined process execution because BaseProvider.runProcess is private.
   private runOnce(
     args: string[],
     signal?: AbortSignal,

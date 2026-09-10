@@ -3,14 +3,10 @@ import type { ProviderConfigYaml } from '@star-cliproxy/shared';
 import { channelBridgeManager, type BridgeLaunchOptions } from '../../channel-bridge/manager.js';
 import { loadProviderConfigFromDb } from './providers.js';
 
-// 내장 Claude Channel bridge 라이프사이클 제어 라우트.
-// 대시보드 Claude 설정 화면에서 start/stop/restart/status를 호출한다.
-
 interface ChannelBridgeDeps {
   defaultConfigs: Record<string, ProviderConfigYaml>;
 }
 
-// claude provider의 effective 설정(기본 + DB 오버라이드)을 구성
 async function resolveClaudeConfig(deps: ChannelBridgeDeps): Promise<ProviderConfigYaml> {
   const base = deps.defaultConfigs.claude;
   const override = (await loadProviderConfigFromDb('claude')) ?? {};
@@ -72,8 +68,7 @@ export function registerChannelBridgeRoutes(app: FastifyInstance, deps: ChannelB
   });
 }
 
-// 서버 부팅 시 managed + auto_start 설정이면 내장 bridge를 자동 시작.
-// 실패해도 서버 부팅을 막지 않도록 예외를 삼킨다.
+// Auto-starts managed bridge on boot; swallows errors to avoid preventing server boot.
 export async function maybeAutoStartBridge(deps: ChannelBridgeDeps): Promise<void> {
   try {
     const config = await resolveClaudeConfig(deps);

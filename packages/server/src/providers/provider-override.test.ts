@@ -20,20 +20,20 @@ describe('mergeProviderConfig', () => {
     _resetOverrideWarnCache();
   });
 
-  it('returns base copy when overrides는 undefined', () => {
+  it('returns base copy when overrides is undefined', () => {
     const base = baseConfig();
     const merged = mergeProviderConfig(base, undefined, 'codex');
     expect(merged).toEqual(base);
-    expect(merged).not.toBe(base);  // 새 객체 보장
+    expect(merged).not.toBe(base); // Ensures a new object is returned
   });
 
-  it('returns base copy when overrides는 빈 객체', () => {
+  it('returns base copy when overrides is an empty object', () => {
     const base = baseConfig();
     const merged = mergeProviderConfig(base, {}, 'codex');
     expect(merged).toEqual(base);
   });
 
-  it('cli_options 일부 키만 deep merge — 다른 키 보존', () => {
+  it('deep merges partial cli_options while preserving other keys', () => {
     const base = baseConfig({ cli_options: { ephemeral: true } });
     const overrides: ProviderOverrides = {
       cli_options: { enable_session_reuse: true, session_ttl_ms: 3600000 },
@@ -46,21 +46,21 @@ describe('mergeProviderConfig', () => {
     });
   });
 
-  it('cli_options.ephemeral 오버라이드는 base 값을 교체', () => {
+  it('replaces base cli_options.ephemeral value', () => {
     const base = baseConfig({ cli_options: { ephemeral: true } });
     const overrides: ProviderOverrides = { cli_options: { ephemeral: false } };
     const merged = mergeProviderConfig(base, overrides, 'codex');
     expect(merged.cli_options?.ephemeral).toBe(false);
   });
 
-  it('extra_args는 교체 (append 아님)', () => {
+  it('replaces extra_args instead of appending', () => {
     const base = baseConfig({ extra_args: ['--a', '--b'] });
     const overrides: ProviderOverrides = { extra_args: ['--c'] };
     const merged = mergeProviderConfig(base, overrides, 'codex');
     expect(merged.extra_args).toEqual(['--c']);
   });
 
-  it('timeout_ms / working_dir 화이트리스트 통과', () => {
+  it('allows whitelisted timeout_ms and working_dir', () => {
     const base = baseConfig();
     const overrides: ProviderOverrides = { timeout_ms: 60000, working_dir: '/tmp/x' };
     const merged = mergeProviderConfig(base, overrides, 'codex');
@@ -68,7 +68,7 @@ describe('mergeProviderConfig', () => {
     expect(merged.working_dir).toBe('/tmp/x');
   });
 
-  it('base 인스턴스는 변형되지 않음 (불변성)', () => {
+  it('preserves immutability of base config', () => {
     const base = baseConfig({ cli_options: { ephemeral: true }, extra_args: ['--keep'] });
     const baseSnapshot = JSON.parse(JSON.stringify(base));
     mergeProviderConfig(base, {
@@ -78,7 +78,7 @@ describe('mergeProviderConfig', () => {
     expect(base).toEqual(baseSnapshot);
   });
 
-  it('알 수 없는 provider면 전체 drop + warn 1회', () => {
+  it('drops all overrides and warns once for unknown provider', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const base = baseConfig();
     const merged = mergeProviderConfig(
@@ -88,13 +88,13 @@ describe('mergeProviderConfig', () => {
     );
     expect(merged).toEqual(base);
     expect(warn).toHaveBeenCalledTimes(1);
-    // 두 번째 호출은 dedupe되어 warn 안 됨
+    // Second call is deduplicated; no additional warning
     mergeProviderConfig(base, { cli_options: { ephemeral: false } }, 'unknown-provider');
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 
-  it('claude mode와 channel_options를 whitelist 기반으로 병합한다', () => {
+  it('merges claude mode and channel_options based on whitelist', () => {
     const base = baseConfig({
       cli_path: 'claude',
       default_model: 'claude-sonnet-4-6',

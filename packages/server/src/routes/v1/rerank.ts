@@ -20,7 +20,7 @@ interface RerankDeps {
   debug: DebugService;
 }
 
-// 에러 메시지에서 내부 경로/스택 제거
+// Strips file paths and stack frames from error messages.
 function sanitizeProviderError(message: string): string {
   return message
     .replace(/\/[\w/.@-]+/g, '[path]')
@@ -29,7 +29,7 @@ function sanitizeProviderError(message: string): string {
     .substring(0, 200);
 }
 
-// executeRerank 메서드를 보유한 프로바이더만 허용 (HttpProvider 전용 덕 타이핑)
+// Duck-types providers that support reranking.
 interface RerankCapableProvider {
   executeRerank(options: RerankOptions): Promise<RerankResult>;
 }
@@ -49,7 +49,6 @@ export function registerRerankRoute(
       const requestId = createRequestId();
       const body = request.body;
 
-      // 입력 검증
       if (!body.model || !body.query || !Array.isArray(body.documents)) {
         return reply.status(400).send({
           error: {
@@ -72,7 +71,6 @@ export function registerRerankRoute(
         });
       }
 
-      // 라우팅
       const routes = await deps.router.resolve(body.model);
       if (routes.length === 0) {
         return reply.status(400).send({
@@ -88,7 +86,7 @@ export function registerRerankRoute(
       const apiKeyId = (request as unknown as { apiKeyId?: string }).apiKeyId;
       const keyLimits = (request as unknown as { apiKeyRateLimits?: { rpm?: number | null; rpd?: number | null } }).apiKeyRateLimits;
 
-      // === 레이트 리밋: 글로벌/키 단위는 요청당 1회만 차감 (폴백 루프 진입 전) ===
+      // Consume global/key rate limit quota once per request before attempting provider fallbacks.
       const gkResult = deps.rateLimiter.checkGlobalAndKey(apiKeyId ?? 'anonymous', keyLimits);
       if (!gkResult.allowed) {
         reply.header('Retry-After', String(gkResult.retryAfterSeconds ?? 30));
@@ -112,7 +110,6 @@ export function registerRerankRoute(
           continue;
         }
 
-        // 프로바이더 단위 한도는 시도하는 프로바이더별로 차감. 초과 시 다음 프로바이더로 폴백.
         const provRate = deps.rateLimiter.checkProvider(route.provider);
         if (!provRate.allowed) {
           rateLimitRetryAfter = provRate.retryAfterSeconds ?? 30;
@@ -126,7 +123,6 @@ export function registerRerankRoute(
           continue;
         }
 
-        // rerank 지원 여부 확인 (HttpProvider만 endpointTypes에 'rerank' 포함)
         if (!provider.endpointTypes.includes('rerank') || !hasExecuteRerank(provider)) {
           lastError = new Error(`Provider ${route.provider} does not support rerank`);
           continue;
@@ -141,7 +137,6 @@ export function registerRerankRoute(
           startedAt: startTime,
         });
 
-        // 디버그 캡처
         const debugEnabled = deps.debug.isEnabled(body.model);
         let debugCapture: DebugCaptureInfo | undefined;
         let debugLogId: string | undefined;
@@ -265,7 +260,7 @@ export function registerRerankRoute(
         }
       }
 
-      // 모든 provider가 프로바이더 단위 한도로 소진되었으면 502 대신 429 반환.
+      // Return 429 instead of 502 when all candidate providers were exhausted by provider rate limits.
       if (rateLimitRetryAfter !== null) {
         reply.header('Retry-After', String(rateLimitRetryAfter));
         return reply.status(429).send({

@@ -3,7 +3,7 @@ import { BaseProvider, type ProviderModelInfo } from './base-provider.js';
 import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { registerParser, PlainTextParser } from '../utils/stream-transformer.js';
 
-// NDJSON 필드 기반 스트리밍 파서 (Generic CLI 프로바이더용)
+// Stream parser for NDJSON CLI output
 class NdjsonFieldParser extends PlainTextParser {
   constructor(
     private readonly contentField: string,
@@ -16,7 +16,6 @@ class NdjsonFieldParser extends PlainTextParser {
     const trimmed = line.trim();
     if (!trimmed) return null;
 
-    // done 인디케이터 체크
     if (this.doneIndicator && trimmed === this.doneIndicator) {
       return { type: 'done' as const };
     }
@@ -29,14 +28,13 @@ class NdjsonFieldParser extends PlainTextParser {
       }
       return null;
     } catch {
-      // JSON 파싱 실패 시 plain text fallback
+      // Fall back to plain text if chunk is not valid JSON
       return { type: 'delta' as const, content: trimmed };
     }
   }
 }
 
 export class GenericCliProvider extends BaseProvider {
-  // name은 config에서 동적으로 결정됨
   readonly name: string;
 
   private readonly genericConfig: GenericCliProviderConfig;
@@ -48,7 +46,6 @@ export class GenericCliProvider extends BaseProvider {
     this.initParser();
   }
 
-  // streaming_enabled + stream_content_field가 있으면 NDJSON 파서 등록
   protected override initParser() {
     if (
       this.genericConfig.streaming_enabled &&
@@ -61,23 +58,19 @@ export class GenericCliProvider extends BaseProvider {
         ),
       );
     }
-    // 등록 후 super.initParser()로 레지스트리에서 파서 인스턴스 획득
     super.initParser();
   }
 
   protected buildArgs(options: ExecuteOptions): string[] {
     const model = options.model || this.config.default_model;
 
-    // 스트리밍 시 stream_args_template 우선 사용
     const template =
       options.stream && this.genericConfig.stream_args_template
         ? this.genericConfig.stream_args_template
         : this.genericConfig.args_template;
 
-    // {model} 플레이스홀더 치환
     const args = template.map((arg) => arg.replace(/\{model\}/g, model));
 
-    // arg 모드: {prompt} 플레이스홀더 치환
     if (this.genericConfig.prompt_mode === 'arg') {
       const prompt = convertMessagesToSinglePrompt(options.messages);
       for (let i = 0; i < args.length; i++) {
@@ -85,14 +78,12 @@ export class GenericCliProvider extends BaseProvider {
       }
     }
 
-    // extra_args 추가
     args.push(...this.config.extra_args);
 
     return args;
   }
 
-  // stdin 모드: 프롬프트를 stdin으로 전달
-  // arg 모드: undefined (buildArgs에서 {prompt} 치환으로 처리)
+  // Stdin mode sends prompt via stdin; arg mode embeds prompt into arguments
   protected override getStdinData(options: ExecuteOptions): string | undefined {
     if (this.genericConfig.prompt_mode === 'stdin') {
       return convertMessagesToSinglePrompt(options.messages);
@@ -100,7 +91,6 @@ export class GenericCliProvider extends BaseProvider {
     return undefined;
   }
 
-  // non-streaming 출력 파싱
   protected override parseNonStreamOutput(stdout: string): ExecuteResult {
     const trimmed = stdout.trim();
 
@@ -124,13 +114,10 @@ export class GenericCliProvider extends BaseProvider {
             usage: { promptTokens: 0, completionTokens: tokens, totalTokens: tokens },
             finishReason: 'stop',
           };
-        } catch {
-          // JSON 파싱 실패 시 plain text 폴백
-        }
+        } catch {}
       }
     }
 
-    // plain_text 모드 또는 폴백
     const tokens = Math.ceil(trimmed.length / 4);
     return {
       content: trimmed,
@@ -139,8 +126,7 @@ export class GenericCliProvider extends BaseProvider {
     };
   }
 
-  // 헬스 체크: health_check_args 설정값 사용 (기본: ["--version"])
-  // BaseProvider.checkHealth()는 ["--version"] 하드코딩이므로 오버라이드
+  // Override BaseProvider.checkHealth() to support configurable health_check_args
   override async checkHealth() {
     const args = this.genericConfig.health_check_args ?? ['--version'];
     try {
@@ -166,12 +152,10 @@ export class GenericCliProvider extends BaseProvider {
     }
   }
 
-  // 대시보드용: 현재 generic 설정 반환
   getConfig(): GenericCliProviderConfig {
     return { ...this.genericConfig };
   }
 
-  // 대시보드용: 런타임 설정 변경
   updateConfig(partial: Partial<GenericCliProviderConfig>): void {
     Object.assign(this.config, partial);
     Object.assign(this.genericConfig, partial);

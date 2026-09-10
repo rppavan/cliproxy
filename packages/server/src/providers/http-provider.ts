@@ -17,21 +17,18 @@ import type {
 import { BaseProvider, type ProviderModelInfo } from './base-provider.js';
 
 /**
- * OpenAI 호환 HTTP API 프로바이더.
- * MLX serve, llama.cpp server, vLLM, Ollama 등 로컬 서비스 지원.
- *
- * BaseProvider를 확장하되 CLI 관련 메서드는 모두 오버라이드하여
- * fetch 기반 HTTP 요청으로 대체한다.
+ * OpenAI-compatible HTTP API provider for local services such as MLX serve, llama.cpp server, vLLM, and Ollama.
+ * Overrides CLI-related methods with fetch-based HTTP requests.
  */
 export class HttpProvider extends BaseProvider {
   readonly name: string;
   override readonly endpointTypes = ['chat', 'embeddings', 'tts', 'rerank'] as const;
   private httpConfig: HttpProviderConfig;
-  /** 업스트림에서 마지막으로 통한 rerank 페이로드 규격 (없으면 TEI부터 시도) */
+  /** Last successful rerank wire format with upstream (defaults to TEI) */
   private rerankWireFormat: RerankWireFormat | null = null;
 
   constructor(providerName: string, httpConfig: HttpProviderConfig) {
-    // BaseProvider에 최소한의 ProviderConfigYaml 전달 (CLI 코드 경로는 사용되지 않음)
+    // BaseProvider requires a minimal ProviderConfigYaml even though CLI paths are unused
     const baseConfig: ProviderConfigYaml = {
       enabled: httpConfig.enabled,
       cli_path: '',
@@ -43,18 +40,17 @@ export class HttpProvider extends BaseProvider {
     super(baseConfig);
     this.name = providerName;
     this.httpConfig = httpConfig;
-    // HTTP Provider는 자체 SSE 파싱 → BaseProvider의 parser 불필요
+    // HttpProvider handles SSE stream parsing directly
     this.parser = { parse: () => null };
   }
 
-  // CLI 전용 — 사용되지 않음
+  // CLI only - unused in HttpProvider
   protected buildArgs(): string[] {
     return [];
   }
 
   updateConfig(partial: Partial<ProviderConfigYaml>): void {
     super.updateConfig(partial);
-    // httpConfig도 동기화
     if ('enabled' in partial) this.httpConfig.enabled = partial.enabled!;
     if ('default_model' in partial) this.httpConfig.default_model = partial.default_model!;
     if ('max_concurrent' in partial) this.httpConfig.max_concurrent = partial.max_concurrent!;
@@ -63,7 +59,6 @@ export class HttpProvider extends BaseProvider {
 
   updateHttpConfig(partial: Partial<HttpProviderConfig>): void {
     Object.assign(this.httpConfig, partial);
-    // BaseProvider config 동기화
     super.updateConfig({
       enabled: this.httpConfig.enabled,
       default_model: this.httpConfig.default_model,
@@ -76,10 +71,7 @@ export class HttpProvider extends BaseProvider {
     return { ...this.httpConfig };
   }
 
-  // === HTTP 요청 헬퍼 ===
-
-  // base_url은 ~/v1까지 포함 (OpenAI SDK 컨벤션)
-  // 예: http://localhost:8080/v1 → http://localhost:8080/chat/completions
+  // base_url includes /v1 per OpenAI SDK conventions (e.g. http://localhost:8080/v1 -> /chat/completions)
   private buildUrl(path: string): string {
     const base = this.httpConfig.base_url.replace(/\/+$/, '');
     return `${base}${path}`;
@@ -98,13 +90,12 @@ export class HttpProvider extends BaseProvider {
     return headers;
   }
 
-  // cliproxy가 직접 관리하는 표준 필드. extra_body가 이 키들을 덮어쓰지 못하게 보호.
+  // Standard fields managed by cliproxy; protected from extra_body overrides.
   private static readonly RESERVED_BODY_KEYS = new Set([
     'model', 'messages', 'stream', 'max_tokens', 'temperature', 'tools', 'tool_choice',
   ]);
 
-  // OpenAI 호환 백엔드가 response_format을 직접 해석하므로 세 타입 모두 그대로 전달한다.
-  // 백엔드가 실제로 지원하는지는 백엔드 응답(에러)으로 드러난다.
+  // Pass through response_format directly; OpenAI-compatible backends enforce validation.
   override supportsResponseFormat(_format: ChatResponseFormat): boolean {
     return true;
   }
@@ -112,8 +103,7 @@ export class HttpProvider extends BaseProvider {
   private buildRequestBody(options: ExecuteOptions, stream: boolean): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: options.model,
-      // role/content 외에 function calling 필드(name, tool_call_id, tool_calls)도 보존해야
-      // 멀티턴 도구 대화(assistant tool_calls → tool 결과 → 후속 응답)가 백엔드에 온전히 전달됨.
+      // Preserve function calling fields (name, tool_call_id, tool_calls) for multi-turn tool conversations.
       messages: options.messages.map(m => {
         const msg: Record<string, unknown> = { role: m.role, content: m.content };
         if (m.name !== undefined) msg.name = m.name;
@@ -123,22 +113,20 @@ export class HttpProvider extends BaseProvider {
       }),
       stream,
     };
-    // function calling 패스스루: tools가 있을 때만 백엔드로 전달.
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools;
       if (options.toolChoice !== undefined) body.tool_choice = options.toolChoice;
     }
-    // structured output 패스스루: OpenAI 호환 백엔드가 스키마를 직접 강제한다.
-    // RESERVED_BODY_KEYS에는 넣지 않는다 — 이 필드가 배선되기 전부터 extra_body로
-    // response_format을 지정해 온 설정을 조용히 무력화하지 않기 위해서다.
+    // Pass through structured output schema. Not included in RESERVED_BODY_KEYS to maintain
+    // backward compatibility for configs specifying response_format via extra_body.
     if (options.chatResponseFormat) body.response_format = options.chatResponseFormat;
-    // max_tokens 미지정 시 필드 자체를 생략 → 서버 기본값 사용 (vLLM 등의 max_total_tokens 제한 회피)
+    // Omit max_tokens if unspecified so server defaults apply (avoiding max_total_tokens errors on vLLM, etc.)
     const maxTokens = options.maxTokens ?? this.httpConfig.default_max_tokens;
     if (maxTokens !== undefined) body.max_tokens = maxTokens;
     if (options.temperature !== undefined) body.temperature = options.temperature;
 
-    // extra_body 머지: 백엔드 비표준 필드 패스스루 (chat_template_kwargs, top_k, think 등).
-    // 표준 필드(모델/메시지 등)는 cliproxy가 우선 — extra_body로 덮어쓰기 차단.
+    // Merge non-standard backend parameters from extra_body (chat_template_kwargs, top_k, etc.)
+    // while preventing overwrites of standard fields managed by cliproxy.
     if (options.extraBody && typeof options.extraBody === 'object') {
       for (const [key, value] of Object.entries(options.extraBody)) {
         if (HttpProvider.RESERVED_BODY_KEYS.has(key)) continue;
@@ -149,7 +137,6 @@ export class HttpProvider extends BaseProvider {
     return body;
   }
 
-  // === Non-streaming 실행 ===
 
   async execute(options: ExecuteOptions): Promise<ExecuteResult> {
     const url = this.buildUrl('/chat/completions');
@@ -157,7 +144,7 @@ export class HttpProvider extends BaseProvider {
     const body = this.buildRequestBody(options, false);
 
     const debugInfo: Partial<DebugCaptureInfo> = {
-      cliArgs: [], // CLI 미사용
+      cliArgs: [],
       httpRequest: {
         method: 'POST',
         url,
@@ -169,7 +156,6 @@ export class HttpProvider extends BaseProvider {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.httpConfig.timeout_ms);
 
-    // 외부 signal 연결
     if (options.signal) {
       options.signal.addEventListener('abort', () => controller.abort(), { once: true });
     }
@@ -187,7 +173,7 @@ export class HttpProvider extends BaseProvider {
       try {
         responseBody = JSON.parse(rawText) as OpenAIChatCompletionResponse;
       } catch {
-        // JSON 파싱 실패 시 raw text를 디버그에 포함하고 에러
+        // Include raw text in debug info on parse failure
         debugInfo.rawResponseText = rawText;
         debugInfo.httpResponse = {
           status: response.status,
@@ -216,15 +202,13 @@ export class HttpProvider extends BaseProvider {
 
       const choice = responseBody.choices?.[0];
       const msg = choice?.message;
-      // 분리 필드 우선: 백엔드가 reasoning_content/reasoning을 별도로 보내면 그대로 보존.
-      // 시간차 폴백: content가 비고 reasoning만 있는 경우(일부 백엔드)도 reasoning을 답변으로.
+      // Preserve distinct reasoning fields if sent by backend; fall back to reasoning if content is empty.
       const rawContent = msg?.content ?? '';
       const rawReasoning = msg?.reasoning_content ?? msg?.reasoning ?? '';
       const content = rawContent || rawReasoning || '';
       const reasoning = rawContent ? rawReasoning : '';
       const usage = responseBody.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-      // function calling: 백엔드가 반환한 tool_calls를 OpenAI 포맷 그대로 보존.
       const toolCalls = Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0
         ? msg.tool_calls.map((tc) => ({
             id: tc.id ?? '',
@@ -256,7 +240,6 @@ export class HttpProvider extends BaseProvider {
         }
         throw new Error(`${this.name} HTTP request timed out after ${this.httpConfig.timeout_ms}ms`);
       }
-      // 디버그 정보 전달 (응답 없이 실패한 경우)
       if (!debugInfo.httpResponse) {
         options.onDebug?.(debugInfo as DebugCaptureInfo);
       }
@@ -265,8 +248,6 @@ export class HttpProvider extends BaseProvider {
       clearTimeout(timeoutId);
     }
   }
-
-  // === Streaming 실행 ===
 
   async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
     const url = this.buildUrl('/chat/completions');
@@ -333,7 +314,7 @@ export class HttpProvider extends BaseProvider {
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
-          // 마지막 줄은 불완전할 수 있으므로 버퍼에 유지
+          // Incomplete trailing line remains in buffer for next chunk
           buffer = lines.pop() ?? '';
 
           for (const line of lines) {
@@ -350,16 +331,15 @@ export class HttpProvider extends BaseProvider {
           }
         }
 
-        // 버퍼에 남은 데이터 처리
         if (buffer.trim()) {
           if (captureDebug) streamLines.push(buffer.trim());
           const events = parseSSELineToEvents(buffer.trim());
           for (const event of events) yield event;
         }
       } finally {
-        // SSE 'done' 수신으로 조기 return하거나 소비자가 generator를 조기 종료한 경우,
-        // releaseLock만으로는 fetch body 스트림이 취소되지 않아 백엔드 소켓이 timeout까지 잔류한다.
-        // cancel()은 스트림을 명시적으로 닫고 lock도 해제한다(정상 완료 시엔 no-op).
+        // If stream ended early (via [DONE] or consumer break), releasing the lock alone
+        // does not cancel the fetch body stream, leaking upstream sockets until timeout.
+        // reader.cancel() aborts the underlying stream and releases the lock.
         await reader.cancel().catch(() => {});
       }
     } finally {
@@ -371,8 +351,6 @@ export class HttpProvider extends BaseProvider {
       }
     }
   }
-
-  // === Embedding 실행 ===
 
   async executeEmbedding(options: EmbeddingOptions): Promise<EmbeddingResult> {
     const url = this.buildUrl('/embeddings');
@@ -470,16 +448,11 @@ export class HttpProvider extends BaseProvider {
     }
   }
 
-  // === Rerank 실행 ===
-  // 업스트림 rerank 규격은 두 갈래라 자동 협상한다.
-  //   - TEI 네이티브 : `{query, texts}`            → `[{index, score, text?}]`
-  //   - OpenAI 호환  : `{model, query, documents}` → `{results:[{index, relevance_score}]}`
-  //     (cliproxy 자신·Cohere·Jina 계열. cliproxy를 업스트림으로 체인하면 이쪽이다)
-  // 먼저 한 규격으로 보내고 400/422가 오면 반대 규격으로 재시도한다. 통한 규격은 기억해
-  // 이후 왕복을 1회로 줄이되, 업스트림이 교체돼 다시 어긋나면 폴백으로 자동 복구된다.
-  // base_url이 `.../v1`로 끝나면 buildUrl('/rerank')은 `.../v1/rerank`가 되므로,
-  // `/v1/rerank`가 없는 TEI 직결이라면 reverse-proxy/사이드카에서 `/rerank`로 rewrite 필요.
-
+  // Automatically negotiates between the two upstream rerank wire formats:
+  //   - TEI native: `{query, texts}` -> `[{index, score, text?}]`
+  //   - OpenAI-compatible: `{model, query, documents}` -> `{results:[{index, relevance_score}]}` (Cohere, Jina, cliproxy)
+  // Sends the preferred format first and retries with the alternative on 400/422 errors.
+  // Caches the working format to minimize subsequent round-trips.
   async executeRerank(options: RerankOptions): Promise<RerankResult> {
     const preferred = this.rerankWireFormat ?? 'tei';
     const order: RerankWireFormat[] = preferred === 'tei' ? ['tei', 'openai'] : ['openai', 'tei'];
@@ -498,8 +471,8 @@ export class HttpProvider extends BaseProvider {
   }
 
   /**
-   * rerank 1회 시도. 던지지 않고 결과를 반환해 호출부가 폴백 여부를 판단하게 한다.
-   * (onDebug는 호출부가 최종 시도분만 1회 호출 — 기존 계약 유지)
+   * Attempts a single rerank request, returning a result object instead of throwing
+   * so the caller can decide whether to fallback.
    */
   private async attemptRerank(
     format: RerankWireFormat,
@@ -577,8 +550,8 @@ export class HttpProvider extends BaseProvider {
         const errMsg = errObj ? JSON.stringify(errObj) : `HTTP ${response.status}`;
         return {
           ok: false,
-          // 400/422 = 업스트림이 페이로드를 못 알아들은 것 → 반대 규격으로 재시도할 가치가 있다.
-          // 401/403(인증)·404(경로 없음)·429·5xx는 규격을 바꿔도 같은 결과라 재시도하지 않는다.
+          // Status 400/422 indicates payload format mismatch suitable for wire format retry.
+          // 401/403, 404, 429, and 5xx are unlikely to resolve by changing payload format.
           formatMismatch: response.status === 400 || response.status === 422,
           debugInfo,
           error: new Error(`${this.name} HTTP error: ${errMsg}`),
@@ -589,7 +562,7 @@ export class HttpProvider extends BaseProvider {
       if (!normalized) {
         return {
           ok: false,
-          // 200인데 형태를 모르겠다면 규격이 어긋난 것 — 반대 규격으로 한 번 더.
+          // Unrecognized 200 response shape indicates wire format mismatch; retry with alternative.
           formatMismatch: true,
           debugInfo,
           error: new Error(
@@ -606,14 +579,14 @@ export class HttpProvider extends BaseProvider {
           : {}),
       }));
 
-      // 업스트림이 보통 내림차순으로 주지만, 일관성을 위해 명시적으로 정렬.
+      // Explicitly sort descending by relevance score to guarantee consistent ordering across backends.
       results.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
       if (typeof options.topN === 'number' && options.topN > 0) {
         results = results.slice(0, options.topN);
       }
 
-      // TEI는 usage를 반환하지 않으므로 없을 때만 대략 추정 (문자 수 / 4).
+      // TEI does not return token usage, so approximate when missing (~chars / 4).
       const totalTokens =
         normalized.totalTokens ??
         Math.ceil(
@@ -649,8 +622,6 @@ export class HttpProvider extends BaseProvider {
       options.signal?.removeEventListener('abort', onAbort);
     }
   }
-
-  // === TTS 실행 ===
 
   async executeTts(options: TtsOptions): Promise<TtsResult> {
     const url = this.buildUrl('/audio/speech');
@@ -753,7 +724,7 @@ export class HttpProvider extends BaseProvider {
   }
 
   override async listModels(): Promise<ProviderModelInfo[]> {
-    // 1. OpenAI 호환 /models 엔드포인트
+    // 1. OpenAI-compatible /models endpoint
     try {
       const url = this.buildUrl('/models');
       const headers = this.buildHeaders();
@@ -772,7 +743,7 @@ export class HttpProvider extends BaseProvider {
       }
     } catch { /* ignore */ }
 
-    // 2. Ollama /api/tags 엔드포인트
+    // 2. Ollama /api/tags endpoint
     try {
       const url = this.buildUrl('/api/tags');
       const headers = this.buildHeaders();
@@ -798,13 +769,11 @@ export class HttpProvider extends BaseProvider {
   }
 }
 
-// === SSE 파싱 ===
-
 function parseSSELineToEvents(line: string): ProviderEvent[] {
-  // OpenAI SSE 형식: "data: {...}" 또는 "data: [DONE]"
+  // OpenAI SSE format: "data: {...}" or "data: [DONE]"
   if (!line.startsWith('data: ')) return [];
 
-  const data = line.slice(6); // "data: " 제거
+  const data = line.slice(6);
 
   if (data === '[DONE]') {
     return [{ type: 'done' }];
@@ -836,8 +805,7 @@ function parseSSELineToEvents(line: string): ProviderEvent[] {
 
     const events: ProviderEvent[] = [];
 
-    // reasoning_content/reasoning은 thinking 이벤트로, content는 text_delta로 분리 emit.
-    // 백엔드(vLLM/sglang 등)가 reasoning_parser를 켠 경우 별도 필드로 도착한다.
+    // Emit reasoning text as thinking events, and content as text_delta events.
     const reasoningText = delta?.reasoning_content || delta?.reasoning;
     if (reasoningText) {
       events.push({ type: 'thinking', text: reasoningText });
@@ -846,7 +814,7 @@ function parseSSELineToEvents(line: string): ProviderEvent[] {
       events.push({ type: 'text_delta', text: delta.content });
     }
 
-    // tool_calls 지원: 병렬 호출 구분을 위해 backend의 index를 보존.
+    // Preserve backend index to distinguish parallel tool calls.
     if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
         events.push({
@@ -854,7 +822,7 @@ function parseSSELineToEvents(line: string): ProviderEvent[] {
           toolCallId: tc.id ?? '',
           toolName: tc.function?.name ?? '',
           input: tc.function?.arguments ?? '',
-          isPartial: !tc.id, // id가 없으면 partial delta
+          isPartial: !tc.id,
           ...(typeof tc.index === 'number' ? { index: tc.index } : {}),
         });
       }
@@ -866,7 +834,7 @@ function parseSSELineToEvents(line: string): ProviderEvent[] {
   }
 }
 
-// === OpenAI 응답 타입 (내부용) ===
+// Internal OpenAI response types
 
 interface OpenAIChatCompletionResponse {
   choices?: Array<{
@@ -928,15 +896,15 @@ interface OpenAIEmbeddingResponse {
   };
 }
 
-// rerank 업스트림 페이로드 규격. TEI 네이티브 vs OpenAI 호환(cliproxy·Cohere·Jina).
+// Upstream rerank wire formats: TEI native vs OpenAI-compatible (Cohere, Jina, cliproxy).
 type RerankWireFormat = 'tei' | 'openai';
 
-// attemptRerank의 결과 — 던지는 대신 반환해 호출부가 폴백을 결정한다.
+// Result of attemptRerank returned to caller to determine fallback behavior.
 type RerankAttempt =
   | { ok: true; result: RerankResult; debugInfo: Partial<DebugCaptureInfo> }
   | {
       ok: false;
-      /** 페이로드 규격 불일치로 보이는가 (반대 규격 재시도 대상) */
+      /** Indicates whether failure resembles a payload format mismatch eligible for retry */
       formatMismatch: boolean;
       error: Error;
       debugInfo: Partial<DebugCaptureInfo>;
@@ -945,13 +913,13 @@ type RerankAttempt =
 type NormalizedRerankItem = { index: number; relevanceScore: number; document?: string };
 
 /**
- * TEI/OpenAI 두 응답 형태를 공통 구조로 정규화. 어느 쪽도 아니면 null.
- * (요청 규격과 응답 규격이 항상 짝을 이루진 않으므로 응답만 보고 판별한다)
+ * Normalizes TEI and OpenAI rerank responses into a common structure.
+ * Inspects response structure directly as request and response wire formats may differ.
  */
 function normalizeRerankResponse(
   parsed: unknown,
 ): { items: NormalizedRerankItem[]; totalTokens?: number } | null {
-  // TEI: 최상위가 배열
+  // TEI: top-level array
   if (Array.isArray(parsed)) {
     const items: NormalizedRerankItem[] = [];
     for (const raw of parsed) {
@@ -966,7 +934,7 @@ function normalizeRerankResponse(
     return { items };
   }
 
-  // OpenAI/Cohere 호환: `{results: [...], usage?: {total_tokens}}`
+  // OpenAI/Cohere compatible: `{results: [...], usage?: {total_tokens}}`
   const root = parsed as { results?: unknown; usage?: { total_tokens?: unknown } } | null;
   if (!Array.isArray(root?.results)) return null;
 
@@ -980,7 +948,7 @@ function normalizeRerankResponse(
     };
     const score = typeof item?.relevance_score === 'number' ? item.relevance_score : item?.score;
     if (typeof item?.index !== 'number' || typeof score !== 'number') return null;
-    // Cohere는 document를 `{text}` 객체로, 그 외는 문자열로 준다.
+    // Cohere provides document as `{text}`, whereas others return strings.
     const doc =
       typeof item.document === 'string'
         ? item.document
@@ -997,8 +965,6 @@ function normalizeRerankResponse(
   const total = root?.usage?.total_tokens;
   return { items, ...(typeof total === 'number' ? { totalTokens: total } : {}) };
 }
-
-// === 유틸리티 ===
 
 function mapFinishReason(reason?: string): 'stop' | 'length' | 'tool_calls' | 'error' {
   if (reason === 'length') return 'length';

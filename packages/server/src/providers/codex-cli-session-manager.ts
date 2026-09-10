@@ -1,9 +1,9 @@
-// Codex CLI (exec resume) 세션 매니저
-// codex exec --json 첫 호출에서 캡처한 thread_id를 clientKey별로 보관 → 후속 호출이 exec resume <id>로 자동 분기.
-// 같은 패턴: CodexAppServerSessionManager / ClaudeSdkSessionManager.
+// Codex CLI (exec resume) session manager
+// Retains thread_id captured on initial 'codex exec --json' per clientKey,
+// routing subsequent calls automatically to 'codex exec resume <id>'.
 
-const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000; // 30분
-const CLEANUP_INTERVAL_MS = 60 * 1000; // 1분마다 만료 세션 정리
+const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const CLEANUP_INTERVAL_MS = 60 * 1000; // Clean up expired sessions every 1 minute
 
 export interface CliSession {
   threadId: string;
@@ -25,7 +25,7 @@ export class CodexCliSessionManager {
     }
   }
 
-  // clientKey + 모델로 세션 조회. 모델이 다르면 기존 세션을 무효화 후 null 반환.
+  // Retrieves session by clientKey and model; invalidates existing session if model changed
   get(clientKey: string, model: string): CliSession | null {
     const session = this.sessions.get(clientKey);
     if (!session) return null;
@@ -44,7 +44,7 @@ export class CodexCliSessionManager {
     return session;
   }
 
-  // thread_id 캡처 후 등록. 이미 존재하면 갱신(thread_id가 바뀌었을 수 있음).
+  // Registers or updates session with captured thread_id
   set(clientKey: string, threadId: string, model: string): void {
     this.sessions.set(clientKey, {
       threadId,
@@ -54,7 +54,6 @@ export class CodexCliSessionManager {
     });
   }
 
-  // 에러/타임아웃 시 무효화.
   invalidate(clientKey: string): void {
     this.sessions.delete(clientKey);
   }

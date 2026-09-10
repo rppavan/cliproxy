@@ -3,23 +3,20 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { ReasoningEffort, TokenUsage } from '@star-cliproxy/shared';
 import { runClaudeJob, type PtyJobConfig } from './pty-session.js';
 
-// 내장 Claude Code Channel bridge.
-// claude를 interactive 세션(`-p` 없음)으로 PTY 구동하고, 모델이 report_result MCP tool로
-// 보낸 결과를 받아 반환한다 → `claude -p`/Agent SDK 빌링 분리를 회피한다.
-// job 하나당 1회용 세션이며 동시성은 maxConcurrent로 제한. 프로토콜: POST /jobs, GET /jobs/:id, GET /health.
-
+// Runs Claude in an interactive PTY session (without `-p`) and captures output via the
+// report_result MCP tool to avoid claude -p / Agent SDK billing separation.
 export interface BridgeServerOptions {
   port: number;
-  host?: string;                 // 기본 127.0.0.1 (외부 노출 방지)
-  apiKey?: string;               // 설정 시 Authorization: Bearer 검증
-  cliPath: string;               // claude CLI 경로
+  host?: string;
+  apiKey?: string;
+  cliPath: string;
   defaultModel: string;
   workingDir?: string;
   timeoutMs: number;
   extraArgs?: string[];
-  maxConcurrent?: number;        // 동시 실행 job 상한 (기본 4)
-  maxQueue?: number;             // 대기 큐 상한 (기본 256). 동시 실행 + 대기 합이 초과하면 503
-  jobTtlMs?: number;             // 완료 job 보관 시간 (기본 5분)
+  maxConcurrent?: number;
+  maxQueue?: number;
+  jobTtlMs?: number;
 }
 
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -42,7 +39,7 @@ interface JobParams {
 
 const VALID_EFFORTS = new Set<ReasoningEffort>(['low', 'medium', 'high', 'xhigh', 'max']);
 
-// PTY 경로는 토큰 usage를 제공하지 않으므로 길이 기반 추정치를 반환한다.
+// PTY execution does not provide token counts; estimate based on character length.
 function estimateUsage(prompt: string, content: string): TokenUsage {
   const promptTokens = Math.ceil(prompt.length / 4);
   const completionTokens = Math.ceil(content.length / 4);
@@ -159,8 +156,7 @@ export class ChannelBridge {
       return;
     }
 
-    const system = typeof body.system === 'string' ? body.system : undefined;
-    // user_prompt(내장 bridge 전용)가 있으면 우선, 없으면 합쳐진 prompt 사용 (외부 bridge 호환)
+    // Prefer user_prompt when present, falling back to prompt for external bridge compatibility.
     const userPrompt = typeof body.user_prompt === 'string' ? body.user_prompt
       : typeof body.prompt === 'string' ? body.prompt
         : '';
@@ -168,7 +164,6 @@ export class ChannelBridge {
       this.sendJson(res, 400, { ok: false, error: 'prompt is required' });
       return;
     }
-    // 동시 실행 + 대기 큐 합이 상한을 넘을 때만 503 (그 전까지는 큐에 쌓아둔다)
     if (this.active + this.pending.length >= this.opts.maxConcurrent + this.opts.maxQueue) {
       this.sendJson(res, 503, { ok: false, error: 'Bridge queue full, retry later' });
       return;
@@ -179,7 +174,7 @@ export class ChannelBridge {
       ? (body.reasoning_effort as ReasoningEffort)
       : undefined;
 
-    // system + user를 하나의 프롬프트로 합쳐 PTY 세션에 주입한다 (report_result로 결과 회수)
+    // Combine system and user prompts into a single prompt for the PTY session.
     const prompt = system ? `${system}\n\n---\n\n${userPrompt}` : userPrompt;
 
     const jobId = randomUUID();
@@ -187,18 +182,16 @@ export class ChannelBridge {
     const job: JobRecord = { jobId, status: 'queued', createdAt: now, updatedAt: now };
     this.jobs.set(jobId, job);
 
-    // 큐에 넣고 슬롯이 비면 실행된다. 응답은 즉시 반환하고 executor가 status_url을 polling한다.
     this.schedule(job, { prompt, model, reasoningEffort });
 
     this.sendJson(res, 202, {
       ok: true,
       job_id: jobId,
-      status: job.status, // 슬롯이 있었으면 'running', 없으면 'queued'
+      status: job.status,
       status_url: `http://${this.opts.host}:${this.opts.port}/jobs/${jobId}`,
     });
   }
 
-  // 대기 큐에 넣고 가용 슬롯만큼 실행을 펌프한다 (FIFO)
   private schedule(job: JobRecord, params: JobParams): void {
     this.pending.push({ job, params });
     this.pump();
@@ -234,7 +227,7 @@ export class ChannelBridge {
       job.updatedAt = Date.now();
       this.active -= 1;
       this.scheduleCleanup(job.jobId);
-      this.pump(); // 슬롯이 비었으니 대기 중인 다음 job 실행
+      this.pump();
     }
   }
 
@@ -263,7 +256,7 @@ export class ChannelBridge {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       let size = 0;
-      const MAX = 8 * 1024 * 1024; // 8MB 상한
+      const MAX = 8 * 1024 * 1024;
       req.on('data', (chunk: Buffer) => {
         size += chunk.length;
         if (size > MAX) {

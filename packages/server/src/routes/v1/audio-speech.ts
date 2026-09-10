@@ -20,7 +20,6 @@ interface AudioSpeechDeps {
   debug: DebugService;
 }
 
-// response_format → Content-Type 매핑
 const FORMAT_CONTENT_TYPE: Record<string, string> = {
   mp3: 'audio/mpeg',
   opus: 'audio/opus',
@@ -49,7 +48,6 @@ export function registerAudioSpeechRoute(
       const requestId = createRequestId();
       const body = request.body;
 
-      // 입력 검증
       if (!body.model || !body.input || !body.voice) {
         return reply.status(400).send({
           error: {
@@ -84,7 +82,6 @@ export function registerAudioSpeechRoute(
         });
       }
 
-      // 라우팅
       const routes = await deps.router.resolve(body.model);
       if (routes.length === 0) {
         return reply.status(400).send({
@@ -100,7 +97,7 @@ export function registerAudioSpeechRoute(
       const apiKeyId = (request as unknown as { apiKeyId?: string }).apiKeyId;
       const keyLimits = (request as unknown as { apiKeyRateLimits?: { rpm?: number | null; rpd?: number | null } }).apiKeyRateLimits;
 
-      // === 레이트 리밋: 글로벌/키 단위는 요청당 1회만 차감 (폴백 루프 진입 전) ===
+      // Consume global/key rate limit quota once per request before attempting provider fallbacks.
       const gkResult = deps.rateLimiter.checkGlobalAndKey(apiKeyId ?? 'anonymous', keyLimits);
       if (!gkResult.allowed) {
         reply.header('Retry-After', String(gkResult.retryAfterSeconds ?? 30));
@@ -124,7 +121,6 @@ export function registerAudioSpeechRoute(
           continue;
         }
 
-        // 프로바이더 단위 한도는 시도하는 프로바이더별로 차감. 초과 시 다음 프로바이더로 폴백.
         const provRate = deps.rateLimiter.checkProvider(route.provider);
         if (!provRate.allowed) {
           rateLimitRetryAfter = provRate.retryAfterSeconds ?? 30;
@@ -138,7 +134,6 @@ export function registerAudioSpeechRoute(
           continue;
         }
 
-        // TTS 지원 여부 확인
         if (!provider.endpointTypes.includes('tts')) {
           lastError = new Error(`Provider ${route.provider} does not support text-to-speech`);
           continue;
@@ -153,7 +148,6 @@ export function registerAudioSpeechRoute(
           startedAt: startTime,
         });
 
-        // 디버그 캡처
         const debugEnabled = deps.debug.isEnabled(body.model);
         let debugCapture: DebugCaptureInfo | undefined;
         let debugLogId: string | undefined;
@@ -258,7 +252,7 @@ export function registerAudioSpeechRoute(
         }
       }
 
-      // 모든 provider가 프로바이더 단위 한도로 소진되었으면 502 대신 429 반환.
+      // Return 429 instead of 502 when all candidate providers were exhausted by provider rate limits.
       if (rateLimitRetryAfter !== null) {
         reply.header('Retry-After', String(rateLimitRetryAfter));
         return reply.status(429).send({

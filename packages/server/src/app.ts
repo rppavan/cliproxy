@@ -80,30 +80,23 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     throw new Error('ADMIN_TOKEN must be set when auth is enabled. Set it in .env or config.yaml.');
   }
 
-  // DB 초기화
   await initDatabase(config.database.path);
-
-  // 시드 데이터 (초기 API 키, 모델 매핑)
   await seedDatabase(config);
 
-  // Provider 레지스트리 (빌트인)
   const registry = createProviderRegistry(config.providers);
 
-  // 기존 CLI provider와 분리된 Tool Bridge 인스턴스 등록
   for (const [name, bridgeConfig] of Object.entries(config.toolBridgeProviders)) {
     if (bridgeConfig.enabled) {
       registry.register(new ToolBridgeProvider(name, bridgeConfig));
     }
   }
 
-  // 플러그인 로드 (config.yaml의 plugins 섹션)
   if (config.plugins.length > 0) {
     const pluginResult = await loadPlugins(config.plugins, registry, {
       info: (msg) => console.log(`[plugin] ${msg}`),
       warn: (msg) => console.warn(`[plugin] ${msg}`),
     }, projectRoot);
 
-    // 플러그인 프로바이더의 큐와 rate limit 설정
     for (const name of pluginResult.loaded) {
       const provider = registry.get(name);
       if (provider) {
@@ -127,14 +120,10 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     }
   }
 
-  // DB에서 저장된 Rate Limits 로드 (없으면 config.yaml 기본값 사용)
   const savedRateLimits = await loadRateLimitsFromDb(config.rateLimits);
-
-  // DB에서 저장된 Validation 설정 로드 (없으면 config.yaml 기본값 사용)
   const savedValidation = await loadValidationFromDb();
   let currentValidation: ValidationConfig = savedValidation ?? { ...config.validation };
 
-  // 서비스
   const modelCatalog = new ModelCatalog(registry);
   const router = new ModelRouter(registry, modelCatalog);
   const queueManager = new QueueManager();
@@ -144,26 +133,23 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
   const cache = new ResponseCache(config.cache);
   const debug = new DebugService();
 
-  // Provider별 큐 설정
   for (const [name, providerConfig] of Object.entries(config.providers)) {
     if (providerConfig.enabled) {
       queueManager.addQueue(name, providerConfig.max_concurrent);
     }
   }
 
-  // DB에서 제네릭 프로바이더 로드 및 등록
   await loadGenericProviders(registry, queueManager, {
     info: (msg) => console.log(msg),
     warn: (msg) => console.warn(msg),
   });
 
-  // DB에서 HTTP 프로바이더 로드 및 등록
   await loadHttpProviders(registry, queueManager, {
     info: (msg) => console.log(msg),
     warn: (msg) => console.warn(msg),
   });
 
-  // DB에서 프로바이더 설정 오버라이드 로드 (이전 세션에서 대시보드로 변경한 값)
+  // Apply dashboard overrides saved from previous sessions.
   for (const provider of registry.getAll()) {
     const override = await loadProviderConfigFromDb(provider.name);
     if (override) {
@@ -177,7 +163,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     }
   }
 
-  // Fastify 앱
   const app = Fastify({
     forceCloseConnections: true,
     bodyLimit: config.validation.bodyLimitBytes,
@@ -191,9 +176,8 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     },
   });
 
-  // 선별적 요청 로깅:
-  // - AI 요청(/v1/*, /admin/test-model)은 항상 로깅(incoming + completed)
-  // - 기타 요청(하트비트 /health, 대시보드 폴링, 정적 파일 서빙 등)은 정상 시 생략하고 에러(4xx/5xx) 발생 시에만 로깅
+  // Selective logging: log all AI requests (/v1/*, /admin/test-model);
+  // for high-frequency/static requests (/health, polling, assets), log only 4xx/5xx errors.
   app.addHook('onRequest', async (request) => {
     if (isAiRequest(request.url)) {
       request.log.info({ req: request }, 'incoming request');
@@ -221,17 +205,15 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     request.log.error({ err: error, req: request, res: reply }, 'request error');
   });
 
-  // CORS: ["*"]이면 모든 origin 허용 (로컬 프록시용), 아니면 지정된 origin만 허용
   const corsOrigins = config.server.cors.origins;
   const allowAll = corsOrigins.length === 1 && corsOrigins[0] === '*';
   await app.register(cors, {
     origin: allowAll ? true : corsOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    // allowedHeaders 생략 → 클라이언트가 요청한 헤더를 그대로 반영 (reflect)
-    // Obsidian Copilot 등이 x-stainless-*, dangerously-allow-browser 등 커스텀 헤더 전송
+    // Omitting allowedHeaders reflects requested headers, required by clients like
+    // Obsidian Copilot sending x-stainless-* or dangerously-allow-browser headers.
   });
 
-  // Dashboard UI 정적 파일 서빙 (포트 8300 통합)
   const dashboardDist = findDashboardDist(projectRoot);
   if (dashboardDist) {
     await app.register(fastifyStatic, {
@@ -240,7 +222,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     });
   }
 
-  // Health check (인증 불필요)
   app.get('/health', async (_request, reply) => {
     return reply.send({
       status: 'ok',
@@ -249,7 +230,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     });
   });
 
-  // 서버 설정 정보 (대시보드 API 가이드에서 실제 URL 표시용)
   app.get('/admin/server-info', async (_request, reply) => {
     return reply.send({
       serverPort: config.server.port,
@@ -260,7 +240,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     });
   });
 
-  // OpenAI-compatible 라우트 (/v1/* 엔드포인트 대상 인증)
   if (config.auth.enabled) {
     app.addHook('onRequest', async (request, reply) => {
       if (!request.url.startsWith('/v1')) return;
@@ -268,7 +247,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     });
   }
 
-  // Admin 라우트 (별도 인증 - auth.enabled일 때만 적용)
   if (config.auth.enabled) {
     app.addHook('onRequest', async (request, reply) => {
       if (!request.url.startsWith('/admin')) return;
@@ -277,14 +255,11 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     });
   }
 
-  // /v1/responses: OpenAI Responses API 호환
-  // Obsidian Copilot 등 일부 클라이언트가 이 엔드포인트를 사용
-  // 내부적으로 /v1/chat/completions를 호출한 뒤 Responses API 형식으로 변환
+  // Adapts OpenAI Responses API format used by clients like Obsidian Copilot to /v1/chat/completions.
   app.post('/v1/responses', async (request, reply) => {
     const body = request.body as Record<string, unknown>;
     const wantStream = body.stream === true;
 
-    // input → messages 변환
     let messages = body.messages;
     if (!messages) {
       const input = body.input;
@@ -297,7 +272,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
       }
     }
 
-    // 항상 non-streaming으로 내부 호출 (결과를 변환해야 하므로)
+    // Call upstream non-streaming since the response must be converted before sending.
     const redirectBody = {
       model: body.model,
       messages,
@@ -356,7 +331,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
       return reply.status(200).send(responsesResult);
     }
 
-    // 스트리밍 모드: Responses API SSE 형식으로 이벤트 전송
     const origin = request.headers.origin;
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -368,20 +342,17 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     const sse = (event: string, data: unknown) =>
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-    // response.created
     sse('response.created', {
       type: 'response.created',
       response: { ...responsesResult, status: 'in_progress', output: [] },
     });
 
-    // response.output_item.added
     sse('response.output_item.added', {
       type: 'response.output_item.added',
       output_index: 0,
       item: { type: 'message', role: 'assistant', content: [] },
     });
 
-    // response.content_part.added
     sse('response.content_part.added', {
       type: 'response.content_part.added',
       output_index: 0,
@@ -389,7 +360,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
       part: { type: 'output_text', text: '' },
     });
 
-    // response.output_text.delta — 청크 단위로 전송
     const chunkSize = 20;
     for (let i = 0; i < content.length; i += chunkSize) {
       sse('response.output_text.delta', {
@@ -400,7 +370,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
       });
     }
 
-    // response.output_text.done
     sse('response.output_text.done', {
       type: 'response.output_text.done',
       output_index: 0,
@@ -408,14 +377,12 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
       text: content,
     });
 
-    // response.output_item.done
     sse('response.output_item.done', {
       type: 'response.output_item.done',
       output_index: 0,
       item: responsesResult.output[0],
     });
 
-    // response.completed
     sse('response.completed', {
       type: 'response.completed',
       response: responsesResult,
@@ -424,7 +391,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     reply.raw.end();
   });
 
-  // v1 라우트 등록
   registerChatCompletionsRoute(app, {
     router,
     queue: queueManager,
@@ -485,7 +451,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     debug,
   });
 
-  // Admin 라우트 등록
   registerModelMappingsRoutes(app, { registry, modelCatalog });
   registerApiKeysRoutes(app);
   registerStatsRoutes(app);
@@ -496,7 +461,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     defaultConfigs: config.providers,
   });
   registerChannelBridgeRoutes(app, { defaultConfigs: config.providers });
-  // managed + auto_start면 부팅 시 내장 bridge 자동 시작 (실패해도 서버 부팅은 계속)
+  // Bridge start failure must not block server boot.
   void maybeAutoStartBridge({ defaultConfigs: config.providers });
   registerTestModelRoute(app, registry);
   registerRateLimitsRoutes(app, rateLimiter, config.rateLimits);
@@ -504,7 +469,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
   registerSettingsRoutes(app, {
     getValidation: () => currentValidation,
     setValidation: (v) => {
-      // 기존 객체의 프로퍼티를 덮어쓰기 (chat-completions가 참조 유지)
+      // Mutate in place so route handlers sharing this reference see runtime changes.
       Object.assign(currentValidation, v);
     },
   });
@@ -522,7 +487,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
   registerHttpProviderRoutes(app, { registry, healthChecker, queueManager });
   registerDashboardRoute(app, { registry, queueManager, activeRequests });
 
-  // 활성 요청 API
   app.get('/admin/active-requests', async (_request, reply) => {
     return reply.send({
       count: activeRequests.count(),
@@ -530,10 +494,8 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     });
   });
 
-  // 건강 체크 시작
   healthChecker.start(60_000);
 
-  // 만료 캐시 정리 주기: 5분 간격
   const cacheCleanupTimer = setInterval(async () => {
     const deleted = await cache.cleanup();
     if (deleted > 0) {
@@ -541,7 +503,6 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     }
   }, 5 * 60 * 1000);
 
-  // 종료 처리
   app.addHook('onClose', async () => {
     healthChecker.stop();
     await rateLimiter.destroy();
@@ -549,9 +510,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     await channelBridgeManager.stop();
   });
 
-  // SPA fallback 및 404 핸들러
   app.setNotFoundHandler((request, reply) => {
-    // /v1, /admin, /health가 아닌 GET/HEAD 요청은 대시보드 SPA로 라우팅
     if (
       (request.method === 'GET' || request.method === 'HEAD') &&
       !request.url.startsWith('/v1') &&

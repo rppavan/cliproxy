@@ -23,7 +23,6 @@ interface UpdateKeyBody {
 }
 
 export function registerApiKeysRoutes(app: FastifyInstance): void {
-  // 목록 (key_hash 제외, prefix만 노출)
   app.get('/admin/api-keys', async (_request, reply) => {
     const db = getDatabase();
     const all = await db.select({
@@ -40,7 +39,6 @@ export function registerApiKeysRoutes(app: FastifyInstance): void {
     return reply.send(all);
   });
 
-  // 생성 (전체 키는 생성 시에만 반환)
   app.post<{ Body: CreateKeyBody }>('/admin/api-keys', async (request, reply) => {
     const { name, rate_limit_rpm, rate_limit_rpd, expires_at } = request.body;
 
@@ -66,14 +64,13 @@ export function registerApiKeysRoutes(app: FastifyInstance): void {
 
     return reply.status(201).send({
       id,
-      key: rawKey, // 생성 시에만 전체 키 반환
+      key: rawKey,
       key_prefix: getKeyPrefix(rawKey),
       name,
       message: 'Save this key securely. It will not be shown again.',
     });
   });
 
-  // 수정
   app.put<{ Params: { id: string }; Body: UpdateKeyBody }>('/admin/api-keys/:id', async (request, reply) => {
     const { id } = request.params;
     const body = request.body;
@@ -106,7 +103,6 @@ export function registerApiKeysRoutes(app: FastifyInstance): void {
     return reply.send(updated[0]);
   });
 
-  // 키 재생성 (이름 유지, key만 새로 발급)
   app.post<{ Params: { id: string } }>('/admin/api-keys/:id/regenerate', async (request, reply) => {
     const { id } = request.params;
     const db = getDatabase();
@@ -132,12 +128,11 @@ export function registerApiKeysRoutes(app: FastifyInstance): void {
     });
   });
 
-  // 삭제 (관련 로그의 api_key_id를 null로 설정 후 삭제)
   app.delete<{ Params: { id: string } }>('/admin/api-keys/:id', async (request, reply) => {
     const { id } = request.params;
     const db = getDatabase();
 
-    // 외래 키 제약 해소: 관련 request_logs의 api_key_id를 null로 변경
+    // Clear foreign key references in request_logs before deleting.
     await db.update(requestLogs).set({ apiKeyId: null }).where(eq(requestLogs.apiKeyId, id));
     await db.delete(apiKeys).where(eq(apiKeys.id, id));
     return reply.status(204).send();

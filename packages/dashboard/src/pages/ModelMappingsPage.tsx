@@ -19,11 +19,10 @@ import {
   type TestModelResult,
 } from '../api/client';
 
-// 정렬 키. priority는 숫자 오름차순(낮을수록 먼저)이 자연스러우므로 기본 dir과 분리.
+// Priority defaults to ascending (lower number = higher precedence).
 type SortKey = 'alias' | 'provider' | 'priority';
 type SortDir = 'asc' | 'desc';
 
-// 백그라운드 테스트 완료 토스트 — 모달이 닫혀 있는 동안 결과가 도착하면 띄움.
 interface Toast {
   rowId: string;
   success: boolean;
@@ -35,7 +34,7 @@ type ReasoningEffortValue = ReasoningEffort | '';
 
 const REASONING_EFFORT_OPTIONS: ReasoningEffortValue[] = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-// 빈/기본값 표시: '' = 프로바이더 기본값 사용, 'true'/'false' = 명시적 오버라이드
+// '' uses provider default; 'true'/'false' explicitly overrides.
 type TriState = '' | 'true' | 'false';
 
 interface MappingFormState {
@@ -43,23 +42,20 @@ interface MappingFormState {
   provider: string;
   actual_model: string;
   reasoning_effort: ReasoningEffortValue;
-  // ''=상속(전역 default), 'true'=노출, 'false'=숨김
   include_reasoning: TriState;
-  // 백엔드 비표준 필드 JSON (chat_template_kwargs / top_k / think 등). 빈 문자열 = 미설정.
   extra_body_text: string;
   priority: number;
-  // codex provider 한정 오버라이드 — 다른 provider 선택 시 무시
+  // Codex provider-specific overrides; ignored for other providers.
   override_ephemeral: TriState;
   override_enable_session_reuse: TriState;
-  override_session_ttl_ms: string;       // 빈 문자열 = 기본값 따름
-  override_extra_args: string;            // 줄바꿈 구분
+  override_session_ttl_ms: string;
+  override_extra_args: string;
   override_timeout_ms: string;
   override_working_dir: string;
 }
 
-// codex 프로바이더가 admin API에서 응답하지 않을 때 사용할 폴백 기본값.
-// 서버 상수와 동기 유지: cli_options.ephemeral=true (DEFAULT in codex-provider),
-// enable_session_reuse=false, session_ttl_ms=1800000 (CodexCliSessionManager DEFAULT_SESSION_TTL_MS).
+// Fallback defaults when the codex provider admin API is unreachable.
+// Kept in sync with server defaults (codex-provider and CodexCliSessionManager).
 const KNOWN_CODEX_DEFAULTS = {
   cli_options: {
     ephemeral: true,
@@ -84,10 +80,7 @@ const EMPTY_FORM: MappingFormState = {
   override_working_dir: '',
 };
 
-// 폼 상태 → API payload용 ProviderOverrides | null 빌더.
-// 빈/미설정 필드는 omit, 모든 필드가 비어있으면 null 반환.
 function buildOverridesPayload(form: MappingFormState): ProviderOverrides | null {
-  // codex가 아니면 overrides 미적용
   if (form.provider !== 'codex') return null;
   const out: ProviderOverrides = {};
   const cli: NonNullable<ProviderOverrides['cli_options']> = {};
@@ -108,7 +101,6 @@ function buildOverridesPayload(form: MappingFormState): ProviderOverrides | null
   return Object.keys(out).length > 0 ? out : null;
 }
 
-// DB에서 받은 ProviderOverrides → 폼 상태로 복원
 function applyOverridesToForm(overrides: ProviderOverrides | null): Partial<MappingFormState> {
   if (!overrides) return {};
   const cli = overrides.cli_options;
@@ -134,33 +126,25 @@ export default function ModelMappingsPage() {
   const [rowTesting, setRowTesting] = useState<string | null>(null);
   const [rowTestResult, setRowTestResult] = useState<{ id: string; result: TestModelResult } | null>(null);
   const [providerNames, setProviderNames] = useState<string[]>([]);
-  // ephemeral ↔ enable_session_reuse 자동 조정 알림 (3초 후 자동 해제)
   const [overrideMutexNotice, setOverrideMutexNotice] = useState(false);
   const mutexNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // codex 프로바이더의 현재 yaml effective 설정값 (폼 placeholder에 '(기본값: ...)' 표시용)
   const [codexDefaults, setCodexDefaults] = useState<ProviderConfig | null>(null);
-  // ~/.codex/config.toml에서 읽은 글로벌 기본값 (reasoning_effort effective 표시용)
   const [codexCliDefaults, setCodexCliDefaults] = useState<CodexCliDefaults | null>(null);
 
-  // 검색/필터
   const [searchQuery, setSearchQuery] = useState('');
   const [filterProvider, setFilterProvider] = useState<string>('');
   const [filterEffort, setFilterEffort] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<'' | 'on' | 'off'>('');
 
-  // 정렬 (헤더 클릭) — 기본은 priority 오름차순
   const [sortKey, setSortKey] = useState<SortKey>('priority');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  // 행 테스트 모달은 별도 상태로 분리. rowTesting과 분리되어 있어
-  // 모달을 닫아도 백그라운드 테스트는 그대로 진행된다.
+  // Modal visibility is kept separate from test execution so closing the modal does not abort background tests.
   const [testModalRowId, setTestModalRowId] = useState<string | null>(null);
 
-  // 백그라운드 테스트 완료 토스트
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 폼 dirty 추적 — 모달 외부 클릭으로 의도치 않게 작업 손실 방지
   const [formDirty, setFormDirty] = useState(false);
 
   const filteredMappings = useMemo(() => {
@@ -180,7 +164,7 @@ export default function ModelMappingsPage() {
       return true;
     });
 
-    // 정렬 — provider 정렬은 같은 provider끼리 묶이도록 두 번째 키로 alias 사용.
+    // Secondary sort by alias ensures stable grouping when sorting by provider or priority.
     const dirMul = sortDir === 'asc' ? 1 : -1;
     const sorted = [...filtered].sort((a, b) => {
       if (sortKey === 'alias') {
@@ -189,9 +173,8 @@ export default function ModelMappingsPage() {
       if (sortKey === 'provider') {
         const c = a.provider.localeCompare(b.provider);
         if (c !== 0) return c * dirMul;
-        return a.alias.localeCompare(b.alias); // 그룹 내 보조 정렬
+        return a.alias.localeCompare(b.alias);
       }
-      // priority — 숫자
       const c = (a.priority - b.priority) * dirMul;
       if (c !== 0) return c;
       return a.alias.localeCompare(b.alias);
@@ -199,7 +182,6 @@ export default function ModelMappingsPage() {
     return sorted;
   }, [mappings, searchQuery, filterProvider, filterEffort, filterStatus, sortKey, sortDir]);
 
-  // 헤더 클릭 정렬 토글: 같은 키면 방향 토글, 다른 키면 그 키로 asc 시작
   const handleSort = useCallback((key: SortKey) => {
     setSortKey((prev) => {
       if (prev === key) {
@@ -219,7 +201,6 @@ export default function ModelMappingsPage() {
     setFilterStatus('');
   };
 
-  // AbortController refs
   const formTestAbortRef = useRef<AbortController | null>(null);
   const rowTestAbortRef = useRef<AbortController | null>(null);
 
@@ -229,15 +210,12 @@ export default function ModelMappingsPage() {
 
   useEffect(load, []);
 
-  // 프로바이더 목록 동적 로드 (플러그인 포함)
   useEffect(() => {
     fetchProviders()
       .then((providers) => setProviderNames(providers.map((p) => p.name)))
-      .catch(() => { /* 실패 시 기본값 유지 */ });
+      .catch(() => {});
   }, []);
 
-  // codex 프로바이더의 effective 기본값 — Provider Overrides 폼 placeholder/배지에 사용.
-  // codex 미등록/404 시에는 서버 상수와 동일한 폴백 사용 (DEFAULT 정의는 아래 KNOWN_CODEX_DEFAULTS).
   useEffect(() => {
     fetchProviderConfig('codex')
       .then(setCodexDefaults)
@@ -245,7 +223,7 @@ export default function ModelMappingsPage() {
     fetchCodexCliDefaults()
       .then(setCodexCliDefaults)
       .catch(() => setCodexCliDefaults(null));
-  }, []);  // mount 시 1회 + 폼 열릴 때 별도 refresh는 아래 effect로 처리
+  }, []);
 
   useEffect(() => {
     if (showForm) {
@@ -254,7 +232,6 @@ export default function ModelMappingsPage() {
     }
   }, [showForm]);
 
-  // placeholder 빌더: 실값 있으면 '(기본값: X)' 형태, 없으면 일반 '(기본값 사용)' 사용
   const defaultLabel = useCallback((value: unknown): string => {
     if (value === undefined || value === null || value === '') return t('models.overrides.useDefault');
     if (typeof value === 'boolean') return `${t('models.overrides.defaultPrefix')}: ${value ? 'true' : 'false'}`;
@@ -266,15 +243,13 @@ export default function ModelMappingsPage() {
     return `${t('models.overrides.defaultPrefix')}: ${String(value)}`;
   }, [t]);
 
-  // 폼/기본값을 합쳐 실효값 계산. 폼 명시값 > yaml 기본값 > undefined 순.
-  // ephemeral의 경우 session_reuse가 true(실효 기준)면 강제 false.
+  // If session_reuse is effectively true, ephemeral is forced to false.
   const resolveEffectiveBool = (formVal: TriState, baseVal: boolean | undefined): boolean | undefined => {
     if (formVal === 'true') return true;
     if (formVal === 'false') return false;
     return baseVal;
   };
 
-  // yaml fetch 실패 시 폴백 기본값 사용 (KNOWN_CODEX_DEFAULTS).
   const effectiveSessionReuseBase =
     codexDefaults?.cli_options?.enable_session_reuse ?? KNOWN_CODEX_DEFAULTS.cli_options.enable_session_reuse;
   const effectiveEphemeralBase =
@@ -289,11 +264,10 @@ export default function ModelMappingsPage() {
 
   const baseEphemeral = resolveEffectiveBool(form.override_ephemeral, effectiveEphemeralBase);
 
-  // session_reuse가 true면 서버에서 ephemeral을 자동으로 false로 강제 (codex-provider.getEffectiveConfig)
+  // Server forces ephemeral=false when session_reuse=true (see codex-provider.getEffectiveConfig).
   const effectiveEphemeral = effectiveSessionReuse === true ? false : baseEphemeral;
   const ephemeralIsForced = effectiveSessionReuse === true && baseEphemeral !== false;
 
-  // 컴포넌트 언마운트 시 정리
   useEffect(() => {
     return () => {
       formTestAbortRef.current?.abort();
@@ -303,8 +277,7 @@ export default function ModelMappingsPage() {
     };
   }, []);
 
-  // 백그라운드 테스트 완료 감지 — 모달이 닫혀 있을 때만 토스트 노출.
-  // testModalRowId가 결과 row와 같으면 모달 안에서 결과가 이미 보이므로 토스트 불요.
+  // Suppress completion toast if the test modal is currently open for this row.
   useEffect(() => {
     if (!rowTestResult) return;
     if (testModalRowId === rowTestResult.id) return;
@@ -320,14 +293,12 @@ export default function ModelMappingsPage() {
     toastTimerRef.current = setTimeout(() => setToast(null), 6000);
   }, [rowTestResult, testModalRowId, mappings]);
 
-  // 폼 dirty 추적: 모달 열림 시 스냅샷 → 현재 form과 JSON 비교.
   const formSnapshotRef = useRef<string>('');
   useEffect(() => {
     if (showForm) {
-      // 모달 진입 시 현재 form 상태를 기준선으로 저장 (handleEdit/handleAddOpen 이후 호출됨)
       formSnapshotRef.current = JSON.stringify(form);
     }
-    // showForm 의존성만 — form 변경 시 매번 갱신하지 않아야 dirty 비교가 유효
+    // Only track showForm so the baseline snapshot is not overwritten on form edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showForm]);
 
@@ -339,9 +310,7 @@ export default function ModelMappingsPage() {
     setFormDirty(JSON.stringify(form) !== formSnapshotRef.current);
   }, [form, showForm]);
 
-  // ephemeral ↔ enable_session_reuse 상호 배제 자동 조정 핸들러.
-  // 한쪽을 'true'로 바꾸면 다른 쪽이 'true'면 'false'로 자동 변경 + 알림 표시.
-  // 사용자가 의도적으로 'false'/'(기본값)'를 고를 때는 알림 없음.
+  // Mutual exclusion: enabling either option automatically disables the other.
   const handleEphemeralChange = (next: TriState) => {
     let nextReuse = form.override_enable_session_reuse;
     let triggered = false;
@@ -370,7 +339,6 @@ export default function ModelMappingsPage() {
     mutexNoticeTimerRef.current = setTimeout(() => setOverrideMutexNotice(false), 5000);
   };
 
-  // 폼 테스트 취소
   const cancelFormTest = useCallback(() => {
     if (formTestAbortRef.current) {
       formTestAbortRef.current.abort();
@@ -379,7 +347,6 @@ export default function ModelMappingsPage() {
     setTesting(false);
   }, []);
 
-  // 행 테스트 취소
   const cancelRowTest = useCallback(() => {
     if (rowTestAbortRef.current) {
       rowTestAbortRef.current.abort();
@@ -388,7 +355,6 @@ export default function ModelMappingsPage() {
     setRowTesting(null);
   }, []);
 
-  // 폼 닫기 (테스트 중이면 취소)
   const closeForm = useCallback(() => {
     cancelFormTest();
     setShowForm(false);
@@ -400,7 +366,6 @@ export default function ModelMappingsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     cancelFormTest();
-    // 빈 문자열 → null(unset), 값이 있으면 그대로 전송
     const reasoningEffort: ReasoningEffort | null = form.reasoning_effort === ''
       ? null
       : form.reasoning_effort;
@@ -408,7 +373,6 @@ export default function ModelMappingsPage() {
       ? null
       : form.include_reasoning === 'true';
 
-    // extra_body 파싱. 빈 문자열은 null, 잘못된 JSON이면 에러.
     let extraBody: Record<string, unknown> | null = null;
     const extraText = form.extra_body_text.trim();
     if (extraText) {
@@ -479,7 +443,6 @@ export default function ModelMappingsPage() {
     load();
   };
 
-  // 폼에서 테스트
   const handleTest = async () => {
     if (!form.provider || !form.actual_model) {
       setTestResult({ success: false, provider: form.provider, model: form.actual_model, error: 'Provider and Actual Model are required.', latencyMs: 0 });
@@ -510,14 +473,13 @@ export default function ModelMappingsPage() {
     }
   };
 
-  // 테이블 행에서 테스트 — 모달 자동 오픈. 모달을 닫아도 테스트는 백그라운드에서 계속.
   const handleRowTest = async (m: ModelMapping) => {
     cancelRowTest();
     const controller = new AbortController();
     rowTestAbortRef.current = controller;
     setRowTesting(m.id);
     setRowTestResult(null);
-    setTestModalRowId(m.id);  // 모달 열기 — 닫혀도 fetch는 abort되지 않음
+    setTestModalRowId(m.id);
 
     try {
       const result = await testModel(m.provider, m.actualModel, controller.signal);
@@ -537,19 +499,16 @@ export default function ModelMappingsPage() {
     }
   };
 
-  // 토스트의 "보기" 클릭 → 해당 행 결과 모달 재오픈
   const handleToastView = useCallback(() => {
     if (!toast) return;
     setTestModalRowId(toast.rowId);
     setToast(null);
   }, [toast]);
 
-  // 테스트 모달 닫기 — fetch는 그대로 진행 (취소하지 않음)
   const closeTestModal = useCallback(() => {
     setTestModalRowId(null);
   }, []);
 
-  // 테스트 모달 안에서 명시적으로 취소 버튼 누른 경우
   const cancelTestFromModal = useCallback(() => {
     cancelRowTest();
     setTestModalRowId(null);
@@ -563,13 +522,11 @@ export default function ModelMappingsPage() {
     setTestResult(null);
   }, [cancelFormTest]);
 
-  // dirty 폼 닫기 시 확인. 닫아도 되면 true 반환.
   const handleBeforeFormClose = useCallback((): boolean => {
     if (!formDirty) return true;
     return confirm(t('models.editUnsavedConfirm'));
   }, [formDirty, t]);
 
-  // 현재 테스트 모달이 가리키는 매핑 객체
   const testModalMapping = useMemo(
     () => testModalRowId ? mappings.find((m) => m.id === testModalRowId) ?? null : null,
     [testModalRowId, mappings],
@@ -591,7 +548,6 @@ export default function ModelMappingsPage() {
 
       {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
 
-      {/* 폼 모달 */}
       <Modal
         open={showForm}
         onClose={closeForm}
@@ -640,10 +596,10 @@ export default function ModelMappingsPage() {
                 <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">
                   {t('models.reasoningEffortLabel')}
                   {(() => {
-                    // 추론 수준 effective 결정:
-                    //   1) 매핑에 명시값 있으면 그 값
-                    //   2) codex 프로바이더 + ~/.codex/config.toml의 model_reasoning_effort 있으면 그 값 (출처 표시)
-                    //   3) 그 외에는 "CLI default"
+                    // Resolution order for effective reasoning effort:
+                    // 1) Explicit mapping value
+                    // 2) ~/.codex/config.toml model_reasoning_effort for codex provider
+                    // 3) CLI default
                     if (form.reasoning_effort) {
                       return (
                         <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border border-blue-300 dark:border-blue-700">
@@ -737,8 +693,6 @@ export default function ModelMappingsPage() {
               </div>
             </div>
 
-            {/* Provider Overrides (codex CLI 1차 지원) — 매핑 단위로 프로바이더 옵션을 덮어씀.
-                빈 상태(공란/'기본값') = 프로바이더 yaml 설정 따름, 명시값 = 매핑에서 우선. */}
             {form.provider === 'codex' && (
               <details className="mt-4 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900/60">
                 <summary className="px-4 py-3 text-sm font-semibold text-gray-800 dark:text-gray-100 cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-800/60 rounded-t-lg">
@@ -758,8 +712,7 @@ export default function ModelMappingsPage() {
                     </div>
                   )}
 
-                  {/* 세션 재사용이 effective true가 되면 클라이언트 통합 책임을 강조한다.
-                      잘못 설정하면 다른 사용자의 컨텍스트가 섞일 수 있어 보안/품질 모두에 영향. */}
+                  {/* Warn when session reuse is enabled because improper client-side isolation risks leaking context across users. */}
                   {effectiveSessionReuse === true && (
                     <div
                       role="alert"
@@ -785,7 +738,6 @@ export default function ModelMappingsPage() {
                     </div>
                   )}
 
-                  {/* 세션 동작 그룹 — ephemeral/session_reuse/session_ttl_ms */}
                   <fieldset className="border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50/60 dark:bg-gray-800/40 px-4 py-3">
                     <legend className="px-2 text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300">
                       {t('models.overrides.groupSession')}
@@ -795,7 +747,6 @@ export default function ModelMappingsPage() {
                         <label className="text-sm font-semibold text-gray-800 dark:text-gray-100 block mb-1.5">
                           {t('models.overrides.ephemeralLabel')}
                           <span className="ml-1.5 text-[11px] font-mono text-gray-500 dark:text-gray-400 font-normal">ephemeral</span>
-                          {/* 실효값 배지 — 폼 명시 또는 yaml 기본 또는 강제 결과 */}
                           {effectiveEphemeral !== undefined && (
                             <span
                               className={`ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold ${
@@ -875,7 +826,6 @@ export default function ModelMappingsPage() {
                     </div>
                   </fieldset>
 
-                  {/* 실행 설정 그룹 — timeout_ms / working_dir */}
                   <fieldset className="border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50/60 dark:bg-gray-800/40 px-4 py-3">
                     <legend className="px-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                       {t('models.overrides.groupExecution')}
@@ -916,7 +866,6 @@ export default function ModelMappingsPage() {
                     </div>
                   </fieldset>
 
-                  {/* 추가 인자 그룹 — extra_args */}
                   <fieldset className="border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50/60 dark:bg-gray-800/40 px-4 py-3">
                     <legend className="px-2 text-xs font-semibold uppercase tracking-wider text-purple-700 dark:text-purple-300">
                       {t('models.overrides.groupArgs')}
@@ -971,7 +920,6 @@ export default function ModelMappingsPage() {
             </div>
           </form>
 
-          {/* 테스트 진행 */}
           {testing && (
             <div className="mt-3 px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg">
               <div className="flex items-center justify-between">
@@ -989,7 +937,6 @@ export default function ModelMappingsPage() {
             </div>
           )}
 
-          {/* 테스트 결과 */}
           {testResult && (
             <div className={`mt-3 px-4 py-3 rounded-lg border ${testResult.success ? 'bg-green-50 dark:bg-green-500/10 border-green-200 dark:border-green-500/30' : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30'}`}>
               <div className="flex items-center justify-between mb-1">
@@ -1026,7 +973,6 @@ export default function ModelMappingsPage() {
         </div>
       </Modal>
 
-      {/* 행 테스트 모달 — 모달 닫아도 백그라운드 진행, 완료 시 토스트로 알림 */}
       <Modal
         open={!!testModalRowId}
         onClose={closeTestModal}
@@ -1105,7 +1051,6 @@ export default function ModelMappingsPage() {
         </div>
       </Modal>
 
-      {/* 검색/필터 툴바 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px]">
           <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1165,7 +1110,6 @@ export default function ModelMappingsPage() {
         </div>
       </div>
 
-      {/* 테이블 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
         <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
         <table className="w-full text-sm">
@@ -1183,7 +1127,6 @@ export default function ModelMappingsPage() {
           <tbody>
             {filteredMappings.map((m, idx) => {
               const style = getProviderStyle(m.provider);
-              // provider별 그룹 첫 행에 살짝 두꺼운 구분선 (provider 정렬 시 그룹 가독성 ↑)
               const prevSameProvider = idx > 0 && filteredMappings[idx - 1].provider === m.provider;
               const groupBorder = sortKey === 'provider' && !prevSameProvider
                 ? 'border-t-2 border-t-gray-300 dark:border-t-gray-700'
@@ -1194,7 +1137,6 @@ export default function ModelMappingsPage() {
                 className={`${groupBorder} hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors group ${!m.enabled ? 'opacity-60' : ''}`}
               >
                 <td className="relative px-4 py-3 font-mono text-blue-600 dark:text-blue-300 font-semibold">
-                  {/* 좌측 컬러 액센트 — provider 아이덴티티 보조 표시 */}
                   <span aria-hidden className={`absolute left-0 top-0 bottom-0 w-1 ${style.accent} opacity-60 group-hover:opacity-100 transition-opacity`} />
                   <span className="ml-1">{m.alias}</span>
                 </td>
@@ -1284,7 +1226,6 @@ export default function ModelMappingsPage() {
         </div>
       </div>
 
-      {/* 백그라운드 테스트 완료 토스트 — 모달이 닫혀 있는 동안 결과 도착 시 표시 */}
       {toast && (
         <div
           role="status"
@@ -1329,7 +1270,6 @@ export default function ModelMappingsPage() {
   );
 }
 
-// 정렬 가능한 헤더 셀
 interface SortableThProps {
   label: string;
   sortKey: SortKey;

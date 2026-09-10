@@ -6,7 +6,6 @@ import type { ProviderRegistry } from './provider-registry.js';
 import type { QueueManager } from '../services/queue.js';
 import { HttpProvider } from './http-provider.js';
 
-// DB 키 접두사
 export const HTTP_PROVIDER_PREFIX = 'http_provider:';
 
 interface LoaderLogger {
@@ -19,7 +18,6 @@ interface LoadResult {
   failed: Array<{ name: string; error: string }>;
 }
 
-// 서버 시작 시 DB에서 등록된 HTTP 프로바이더를 로드하여 레지스트리에 등록
 export async function loadHttpProviders(
   registry: ProviderRegistry,
   queueManager: QueueManager,

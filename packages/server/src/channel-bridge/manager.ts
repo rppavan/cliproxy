@@ -2,8 +2,8 @@ import { spawn, exec, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-// 내장 Channel bridge 프로세스의 라이프사이클 관리자 (서버 전역 단일 인스턴스).
-// 대시보드 Claude 설정 화면에서 start/stop/restart/status로 제어한다.
+// Singleton lifecycle manager for the embedded Channel Bridge process.
+// Controlled via start/stop/restart/status from dashboard Claude settings.
 
 export interface BridgeLaunchOptions {
   port: number;
@@ -15,8 +15,8 @@ export interface BridgeLaunchOptions {
   timeoutMs: number;
   extraArgs?: string[];
   maxConcurrent?: number;
-  command?: string;          // 커스텀 실행 커맨드(shell). 비우면 내장 bridge 사용
-  readyTimeoutMs?: number;   // health ready 대기 타임아웃 (기본 15초)
+  command?: string;          // Custom shell launch command. If omitted, uses embedded bridge.
+  readyTimeoutMs?: number;   // Timeout waiting for health ready (default: 15s).
 }
 
 export interface BridgeStatus {
@@ -50,7 +50,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// 포트를 물고 있는 것이 우리(고아) bridge인지 health의 service로 확인
+// Check /health service name to confirm whether an orphan process listening on the port is our bridge.
 async function isOurBridge(host: string, port: number, apiKey?: string): Promise<boolean> {
   try {
     const controller = new AbortController();
@@ -68,7 +68,7 @@ async function isOurBridge(host: string, port: number, apiKey?: string): Promise
   }
 }
 
-// 포트를 점유한 프로세스 정리 (mac/linux). EADDRINUSE 방지용.
+// Kill process occupying port (mac/linux) to prevent EADDRINUSE errors.
 function killPort(port: number): Promise<void> {
   return new Promise((resolve) => {
     if (process.platform === 'win32') { resolve(); return; }
@@ -95,8 +95,7 @@ export class ChannelBridgeManager {
     const host = opts.host || '127.0.0.1';
     const port = opts.port;
 
-    // 백엔드 재시작 등으로 child 핸들을 잃은 고아 bridge가 포트를 물고 있으면 정리한다
-    // (그대로 두면 새 bridge가 EADDRINUSE로 죽고 status만 거짓으로 '실행 중'이 된다).
+    // Clean up orphaned bridge holding the port after backend restarts to prevent EADDRINUSE failures.
     if (await isOurBridge(host, port, opts.apiKey)) {
       await killPort(port);
       await sleep(600);
@@ -149,7 +148,6 @@ export class ChannelBridgeManager {
       if (this.child === child) this.child = null;
     });
 
-    // health ready 대기
     const deadline = Date.now() + readyTimeout;
     while (Date.now() < deadline) {
       if (!this.isRunning()) {
@@ -203,7 +201,7 @@ export class ChannelBridgeManager {
     };
   }
 
-  // 커스텀 커맨드 또는 내장 start 진입점을 현재 런타임(tsx/node)에 맞춰 해석
+  // Resolve custom command or embedded start entry point based on active runtime (tsx vs node).
   private resolveCommand(opts: BridgeLaunchOptions): { cmd: string; args: string[]; useShell: boolean; label: string } {
     if (opts.command && opts.command.trim()) {
       return { cmd: opts.command, args: [], useShell: true, label: opts.command };
@@ -212,12 +210,11 @@ export class ChannelBridgeManager {
     const isTs = here.endsWith('.ts');
     const entry = join(dirname(here), isTs ? 'start.ts' : 'start.js');
     if (isTs) {
-      // dev 런타임(tsx) — node에 tsx ESM loader를 등록해 .ts 진입점 실행
+      // Development runtime (tsx): load ESM loader via --import tsx to run .ts entry points directly.
       return { cmd: process.execPath, args: ['--import', 'tsx', entry], useShell: false, label: `node --import tsx ${entry}` };
     }
     return { cmd: process.execPath, args: [entry], useShell: false, label: `node ${entry}` };
   }
 }
 
-// 서버 전역 단일 매니저
 export const channelBridgeManager = new ChannelBridgeManager();

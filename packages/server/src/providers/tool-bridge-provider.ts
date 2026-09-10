@@ -81,9 +81,8 @@ interface ToolPolicy {
 
 const STREAM_HEARTBEAT_MS = 15_000;
 
-// Codex의 구조화 출력만 허용하고, CLI가 제공하는 자체 실행 도구는 프로세스
-// 인수 단계에서 제거한다. 지원하지 않는 feature 이름이 있으면 Codex가 non-zero로
-// 종료하므로 안전하지 않은 상태로 조용히 폴백하지 않는다.
+// Only allow Codex structured output; strip native execution tools at the CLI argument
+// level so that Codex fails fast on unsupported feature names instead of silently falling back.
 const CODEX_DISABLED_FEATURES = [
   'shell_tool',
   'unified_exec',
@@ -106,8 +105,8 @@ const CODEX_DISABLED_FEATURES = [
 ] as const;
 
 function createSchemaValidator(): Ajv {
-  // 요청마다 인스턴스를 분리해 서로 다른 클라이언트가 같은 $id를 쓰는 스키마를
-  // 제출해도 Ajv의 전역 schema registry가 충돌하지 않게 한다.
+  // Use a separate Ajv instance per request to avoid global schema registry collisions
+  // when different clients submit schemas with identical $id values.
   return new Ajv({ allErrors: true, strict: false });
 }
 
@@ -245,7 +244,7 @@ function parseLastJsonObject(stdout: string): ClaudeJsonResult {
       try {
         return JSON.parse(lines[i]) as ClaudeJsonResult;
       } catch {
-        // 업데이트 알림 등 선행 출력이 있으면 마지막 JSON 라인을 계속 탐색한다.
+        // Skip non-JSON lines (e.g. update notices) to find the final JSON output.
       }
     }
   }
@@ -397,8 +396,7 @@ export function parseCodexToolBridgeOutput(stdout: string, options: ExecuteOptio
     try {
       event = JSON.parse(line) as CodexJsonlEvent;
     } catch {
-      // 업데이트 안내 같은 비 JSON 선행 출력은 무시하되, 아래에서 최종
-      // agent_message가 없으면 전체 요청을 실패 처리한다.
+      // Ignore leading non-JSON output (e.g. update notices); missing final agent_message will fail below.
       continue;
     }
 
@@ -462,7 +460,7 @@ function parseGrokJsonResult(stdout: string): GrokJsonResult {
       try {
         return JSON.parse(lines[i]) as GrokJsonResult;
       } catch {
-        // 업데이트 안내 같은 선행 출력이 있으면 마지막 JSON 라인을 계속 탐색한다.
+        // Skip non-JSON lines (e.g. update notices) to find the final JSON output.
       }
     }
   }
@@ -742,8 +740,8 @@ export class ToolBridgeProvider extends BaseProvider {
       '--output-format', 'json',
       '--json-schema', JSON.stringify(responseSchema),
       '--model', model,
-      // Claude structured output uses an internal tool round-trip. 2 이하에서는
-      // error_max_turns가 발생할 수 있어 3턴을 허용한다 (client/native tools는 별도 차단).
+      // Claude structured output uses an internal tool round-trip. At <= 2 turns,
+      // error_max_turns can occur, so allow 3 turns (client/native tools are disabled separately).
       '--max-turns', '3',
       ...extraArgs,
     ];
@@ -993,9 +991,9 @@ export class ToolBridgeProvider extends BaseProvider {
   }
 
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
-    // Claude --json-schema는 완성된 객체를 반환하므로 CLI 실행은 버퍼링하고,
-    // 결과를 OpenAI 호환 이벤트 순서로 변환한다. 긴 추론 중 클라이언트의
-    // SSE idle timeout이 발생하지 않도록 빈 content delta를 heartbeat로 보낸다.
+    // Claude --json-schema returns a completed object, so execution is buffered
+    // and transformed into OpenAI-compatible events. Send empty content delta
+    // heartbeats to prevent client SSE idle timeouts during long reasoning.
     const completion = this.execute({ ...options, stream: false })
       .then((result) => ({ kind: 'result' as const, result }));
 

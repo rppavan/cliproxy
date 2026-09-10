@@ -29,29 +29,28 @@ providers:
       - "--no-session-persistence"
       - "--permission-mode"
       - "bypassPermissions"
-    # working_dir: "/path/to/project"  # CLI 작업 디렉토리 (기본: 시스템 temp)
-    # mode: "sdk"                      # 실행 모드: 'cli' (기본) | 'sdk' (Agent SDK 사용)
-    # sdk_options:                     # mode: 'sdk'일 때만 적용
-    #   max_turns: 50                  # 최대 에이전트 턴 수
-    #   permission_mode: "bypassPermissions"  # 권한 모드
-    #   allowed_tools: []              # 자동 승인 도구 목록
-    #   disallowed_tools: []           # 차단 도구 목록
-    #   max_budget_usd: 1.0            # 요청당 최대 비용 (USD)
-    #   session_ttl_ms: 1800000        # 세션 TTL (기본 30분)
-    #   enable_session_reuse: true     # 세션 재사용 활성화
-    #   persist_session: false         # 디스크 세션 저장
+    # working_dir: "/path/to/project"
+    # mode: "sdk"                      # 'cli' (default) | 'sdk' (Agent SDK)
+    # sdk_options:
+    #   max_turns: 50
+    #   permission_mode: "bypassPermissions"
+    #   allowed_tools: []
+    #   disallowed_tools: []
+    #   max_budget_usd: 1.0
+    #   session_ttl_ms: 1800000
+    #   enable_session_reuse: true
+    #   persist_session: false
     #
-    # mode: "channel-worker"           # 실험적: 실행 중인 Claude Code Channel bridge로 job 제출
+    # mode: "channel-worker"           # Submits jobs to running Claude Code Channel bridge
     # channel_options:
-    #   endpoint_url: "http://127.0.0.1:8788"  # POST /jobs, GET /jobs/:job_id 지원 bridge (managed면 자동 유추)
+    #   endpoint_url: "http://127.0.0.1:8788"
     #   poll_interval_ms: 500
     #   result_timeout_ms: 300000
-    #   isolation: "external"          # bridge 쪽 격리 정책. API 독립성이 필요하면 one-job-per-worker 권장
-    #   # --- 내장 bridge 직접 관리 (대시보드 Claude 설정 화면에서 start/stop/restart 가능) ---
-    #   managed: true                  # star-cliproxy가 내장 bridge 프로세스를 직접 spawn/supervise
-    #   auto_start: true               # 서버 부팅 시 bridge 자동 시작
-    #   bridge_port: 8788              # 내장 bridge 리스닝 포트
-    #   # bridge_command: "node my-bridge.js"  # 커스텀 bridge 실행 커맨드 (비우면 내장 bridge)
+    #   isolation: "external"          # Recommended one-job-per-worker for API independence
+    #   managed: true                  # cliproxy spawns and supervises internal bridge process
+    #   auto_start: true
+    #   bridge_port: 8788
+    #   # bridge_command: "node my-bridge.js"
 
   codex:
     enabled: true
@@ -63,22 +62,19 @@ providers:
       - "--skip-git-repo-check"
       - "--sandbox"
       - "workspace-write"
-    cli_options:                     # mode: 'cli'(기본)일 때만 적용
-      ephemeral: true                # codex exec --ephemeral 자동 주입 (기본 true)
-                                     # ~/.codex/sessions/*.jsonl 누적 차단. false면 기본 동작 유지.
-      # enable_session_reuse: false  # codex exec resume <thread_id> 기반 세션 재사용 (기본 false)
-                                     # true 시 ephemeral은 강제 false로 전환되고 세션 jsonl이 디스크에 누적됨.
-                                     # clientKey(X-Cliproxy-Session-Id 헤더 또는 API 키)별로 thread 1개 자동 유지.
-      # session_ttl_ms: 1800000      # 세션 TTL (기본 30분). enable_session_reuse=true일 때만 유효.
+    cli_options:
+      ephemeral: true                # Injects --ephemeral to prevent ~/.codex/sessions/*.jsonl accumulation
+      # enable_session_reuse: false  # Reuses sessions via codex exec resume <thread_id>. Forces ephemeral=false.
+      # session_ttl_ms: 1800000      # Valid only when enable_session_reuse is true
     # working_dir: "/path/to/project"
-    # mode: "app-server"              # 실행 모드: 'cli' (기본) | 'app-server' (persistent JSON-RPC)
-    # app_server_options:             # mode: 'app-server'일 때만 적용
-    #   transport: "stdio"            # 전송 방식: 'stdio' (기본) | 'websocket' (실험적)
-    #   session_ttl_ms: 1800000       # 스레드 재사용 TTL (기본 30분)
-    #   enable_session_reuse: true    # 스레드 재사용 활성화
-    #   max_turns: 10                 # 턴 제한
-    #   auto_restart: true            # 크래시 시 자동 재시작
-    #   max_restart_count: 5          # 최대 재시작 횟수
+    # mode: "app-server"              # 'cli' (default) | 'app-server' (persistent JSON-RPC)
+    # app_server_options:
+    #   transport: "stdio"
+    #   session_ttl_ms: 1800000
+    #   enable_session_reuse: true
+    #   max_turns: 10
+    #   auto_restart: true
+    #   max_restart_count: 5
 
   copilot:
     enabled: true
@@ -90,13 +86,10 @@ providers:
       - "--deny-tool=shell"
       - "--deny-tool=write"
     # working_dir: "/path/to/project"
-    # 인증: COPILOT_GITHUB_TOKEN 환경변수 또는 사전 `copilot` OAuth 로그인 필요
+    # Requires COPILOT_GITHUB_TOKEN env var or prior 'copilot' OAuth login.
 
-  # Gemini CLI (gemini) — DEPRECATED / 단종.
-  # Google이 Gemini CLI를 단종하고 Antigravity CLI(agy)로 대체했습니다(아래 agy 참고).
-  # gemini provider 코드는 유지되어 있으므로, Gemini CLI가 다시 제공되면
-  # enabled: true + cli_path 지정만으로 복구할 수 있습니다.
-  # 빌트인이라 블록을 통째로 지우면 기본값으로 다시 enabled되므로 enabled: false로 명시합니다.
+  # Gemini CLI is deprecated in favor of Antigravity CLI (agy).
+  # Explicitly disabled because omitting built-ins defaults them to enabled.
   gemini:
     enabled: false
     # cli_path: "gemini"
@@ -104,81 +97,53 @@ providers:
     # max_concurrent: 10
     # timeout_ms: 300000
     # extra_args:
-    #   - "--yolo"                       # tool 자동 승인 (headless 모드 필수)
-    #   - "--skip-trust"                 # headless 실행 시 trusted folder 프롬프트 방지
-    # working_dir: "/path/to/project"    # 에이전틱 파일 작업 시 필수
+    #   - "--yolo"                       # Auto-approve tools in headless mode
+    #   - "--skip-trust"                 # Prevent trusted folder prompts in headless mode
+    # working_dir: "/path/to/project"
 
-  # Google Antigravity CLI (agy) — 1.1.7 기준.
-  # Gemini CLI의 후계자로 Google이 이전 권장. AI Pro/Ultra 구독 + 사전 Google OAuth 로그인 필요
-  # (시스템 키체인 저장; SSH 세션은 인가 URL 안내). 설치: curl -fsSL https://antigravity.google/cli/install.sh | bash
-  #
-  # 1.1.7 사양 (구현 시 반영됨):
-  #   - `agy models`는 effort가 포함된 안정적인 variant slug를 출력한다. proxy는 model family
-  #     slug + --effort 조합으로 전달하며, 잘못된 모델은 print mode에서 오류로 종료한다.
-  #     default_model "antigravity"는 placeholder → --model을 생략해 agy가 자동 선택.
-  #   - --effort low|medium|high 지원. 매핑의 reasoning_effort를 그대로 전달한다.
-  #   - --output-format json/stream-json으로 실제 token usage와 실시간 delta를 사용한다.
-  #   - 세션 연속성은 매 호출 신규(messages 전체를 매번 prompt로 직렬화).
+  # Google Antigravity CLI (agy)
+  # Requires Google OAuth login via system keychain (or auth URL in SSH sessions).
+  # default_model "antigravity" is a placeholder: omitting --model lets agy auto-select.
   agy:
     enabled: true
     cli_path: "agy"
-    default_model: "antigravity"        # placeholder → --model 생략, agy 자동 선택.
-    max_concurrent: 5                   # AI Pro 쿼터 보호를 위해 보수적 기본값
+    default_model: "antigravity"
+    max_concurrent: 5                   # Conservative default to protect quota
     timeout_ms: 300000
     extra_args: []
-    # 옵션 (사용자 옵트인 — 보안/안정성 영향 큰 플래그):
     # extra_args:
-    #   - "--dangerously-skip-permissions"  # 툴 자동 승인 (무인 프록시 운영 시 필수)
-    #                                       # 주의: prompt 내 악성 지시가 working_dir 범위 안에서 실행될 수 있음
-    #   - "--sandbox"                       # 터미널 제한 샌드박스 (격리 범위는 agy 문서 확인 후 사용)
-    # working_dir: "/path/to/safe-workspace"  # 파일 시스템 격리 권장 (--dangerously-skip-permissions 사용 시 필수)
+    #   - "--dangerously-skip-permissions"  # Auto-approve tools in headless mode
+    #   - "--sandbox"
+    # working_dir: "/path/to/safe-workspace"
 
-  # xAI Grok Build CLI (grok, "Grok Build TUI") — 2026-05-20 발표.
-  # SuperGrok / X Premium+ 구독 + 사전 로그인 필요 (grok login). 설치 후 `grok models`로 모델 확인.
-  # 헤드리스 실행은 JSON/streaming-json으로 파싱하며, 큰 prompt는 --prompt-file을 사용.
-  #
-  # 동작 (구현 시 반영됨, grok 0.2.112 기준):
-  #   - -m/--model 지원 → 매핑된 actual_model을 실제로 전달. `grok models`:
-  #     grok-4.5(default, reasoning). 카탈로그는 계정/관리 설정에 따라 달라질 수 있다.
-  #   - grok-4.5 --effort는 low|medium|high 지원. xhigh|max 요청은 high로 정규화한다.
-  #   - --output-format json/streaming-json으로 실제 token usage와 실시간 delta를 사용한다.
-  #   - 800KB 초과 prompt는 --prompt-file로 전달해 OS ARG_MAX를 우회한다.
-  #   - 세션 연속성은 매 호출 신규(messages 전체를 매번 prompt로 직렬화).
+  # xAI Grok Build CLI (grok)
+  # Requires SuperGrok / X Premium+ login via `grok login`.
+  # Prompts exceeding 800KB are passed via --prompt-file to bypass OS ARG_MAX limits.
   grok:
     enabled: true
     cli_path: "grok"
-    default_model: "grok-4.5"           # `grok models`의 현재 기본 모델
-    max_concurrent: 5                   # 구독 쿼터 보호를 위해 보수적 기본값
+    default_model: "grok-4.5"
+    max_concurrent: 5                   # Conservative default to protect quota
     timeout_ms: 300000
     extra_args: []
-    # 옵션 (사용자 옵트인 — 보안/안정성 영향 큰 플래그):
     # extra_args:
-    #   - "--always-approve"                # 툴 자동 승인 (무인 프록시 운영 시)
-    #                                       # 주의: prompt 내 악성 지시가 working_dir 범위 안에서 실행될 수 있음
-    # working_dir: "/path/to/safe-workspace"  # 파일 시스템 격리 권장 (--always-approve 사용 시 권장)
+    #   - "--always-approve"
+    # working_dir: "/path/to/safe-workspace"
 
-  # Moonshot AI Kimi Code CLI (`kimi`) — @moonshot-ai/kimi-code 0.29.1 기준.
-  # 설치: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
-  # 인증: 단독으로 `kimi login` 또는 `kimi` 실행 후 /login (OAuth/API key).
-  #
-  # 동작:
-  #   - `-p` headless + `--output-format stream-json`으로 assistant/tool/meta NDJSON을 파싱한다.
-  #   - actual_model은 CLI model alias(`kimi-code/...`)여야 한다. 아래 기본 매핑 참고.
-  #   - K3/K3-256k reasoning_effort: low→low, medium/high→high, xhigh/max→max.
-  #   - CLI가 token usage를 출력하지 않아 API usage는 UTF-8 바이트 기반 추정치다.
-  #   - 요청 도중 자체 업데이트를 막기 위해 KIMI_CODE_NO_AUTO_UPDATE=1을 자동 주입한다.
-  #   - prompt mode는 내부적으로 auto permission mode를 사용하므로 Kimi 도구가 무인 실행될 수 있다.
+  # Moonshot AI Kimi Code CLI (kimi)
+  # Injects KIMI_CODE_NO_AUTO_UPDATE=1 to prevent self-updates during requests.
+  # Token usage is estimated from UTF-8 byte length because the CLI does not output tokens.
   kimi:
     enabled: true
     cli_path: "kimi"
-    default_model: "kimi-code/kimi-for-coding"  # 모든 회원 대상 coding 모델
+    default_model: "kimi-code/kimi-for-coding"
     max_concurrent: 5
     timeout_ms: 300000
     extra_args: []
-    # working_dir: "/path/to/isolated-workspace" # 에이전틱 파일/명령 실행을 고려해 격리 디렉터리 권장
+    # working_dir: "/path/to/isolated-workspace"
 
   # OpenCode CLI (`opencode`)
-  # OpenCode headless non-interactive execution with JSON output.
+  # Headless non-interactive execution with JSON output.
   opencode:
     enabled: true
     cli_path: "opencode"
@@ -188,20 +153,19 @@ providers:
     extra_args: []
 
 # Tool Bridge Provider (opt-in)
-# 기존 CLI provider 설정을 상속하면서 OpenAI tool_calls만 별도 구조화 출력으로 처리한다.
-# 일반 claude/codex/grok provider 동작에는 영향이 없고, app-server/SDK 상시 실행도 필요하지 않다.
-# driver는 claude-cli, codex-cli, grok-cli를 지원한다. CLI의 설정·native/MCP 도구는 기본적으로 차단되며,
-# 요청에 포함된 client functions는 cliproxy가 실행하지 않고 호출자에게 tool_calls로 반환한다.
+# Wraps non-tool-calling CLIs with structured output for OpenAI tool_calls without requiring SDK/app-server.
+# Native tools are disabled; client function definitions are converted and returned as tool_calls.
+# AGY is unsupported because it lacks a flag to disable native tools entirely.
 # tool_bridge_providers:
 #   claude-tools:
 #     base_provider: "claude"
 #     driver: "claude-cli"
 #     strategy: "structured-output"
 #     disable_native_tools: true
-#     max_concurrent: 2              # 생략 시 providers.claude 설정 상속
-#     timeout_ms: 300000             # 생략 시 providers.claude 설정 상속
+#     max_concurrent: 2
+#     timeout_ms: 300000
 #   codex-tools:
-#     enabled: true                  # providers.codex가 disabled여도 bridge만 별도 활성화 가능
+#     enabled: true
 #     base_provider: "codex"
 #     driver: "codex-cli"
 #     strategy: "structured-output"
@@ -213,12 +177,8 @@ providers:
 #     strategy: "structured-output"
 #     disable_native_tools: true
 #     max_concurrent: 2
-# AGY 1.1.10은 --json-schema는 지원하지만 native tool 전체 차단 옵션이 없어
-# disable_native_tools:true 계약을 보장할 수 없다. 따라서 agy-cli bridge driver는 아직 지원하지 않는다.
 
-# 플러그인: 커스텀 프로바이더를 코드 수정 없이 추가
-# plugins/ 디렉토리에 플러그인을 만들고 여기에 등록
-# 자세한 가이드: plugins/README.md, 예제: plugins/example-plugin/
+# Plugins: add custom providers without modifying server source code.
 plugins: []
   # - path: "./plugins/example-plugin"
   #   config:
@@ -259,41 +219,29 @@ cache:
   max_entries: 1000
 
 validation:
-  max_message_count: 800         # 메시지 배열 최대 수
-  max_message_length: 250000     # 개별 메시지 최대 길이 (~62K tokens)
-  max_prompt_length: 1000000     # 전체 프롬프트 총 길이 (~250K tokens)
-  max_response_length: 300000    # CLI 응답 최대 길이 (~75K tokens)
-  body_limit_bytes: 16777216     # HTTP 요청 본문 최대 크기 (16MB, 변경 후 재시작 필요)
+  max_message_count: 800
+  max_message_length: 250000
+  max_prompt_length: 1000000
+  max_response_length: 300000
+  body_limit_bytes: 16777216
 
 model_mappings:
-  # reasoning_effort 필드 (선택):
-  #   low | medium | high | xhigh | max
-  #   - Claude  : --effort <level>           (low/medium/high/xhigh/max 지원)
-  #   - Codex   : -c model_reasoning_effort  (low/medium/high 지원, xhigh/max는 high로 폴백)
-  #   - Copilot : --effort <level>           (low/medium/high/xhigh 지원, max는 xhigh로 폴백)
-  #   - Kimi K3 : KIMI_MODEL_THINKING_EFFORT (low/high/max; medium→high, xhigh→max)
-  #   - Gemini  : 미지원 (필드 무시)
-  # 생략하면 각 CLI의 기본 동작을 따른다. CLI 모드에서만 적용 (App Server / SDK 모드 제외).
+  # reasoning_effort (optional): low | medium | high | xhigh | max
+  #   - Claude  : --effort <level>
+  #   - Codex   : -c model_reasoning_effort (falls back to high for xhigh/max)
+  #   - Copilot : --effort <level> (falls back to xhigh for max)
+  #   - Kimi K3 : KIMI_MODEL_THINKING_EFFORT (low/high/max)
+  # Applies to CLI mode only.
   #
-  # provider_overrides 필드 (선택, provider별 화이트리스트 기반):
-  #   동일 프로바이더를 공유하는 매핑마다 옵션을 다르게 적용. 화이트리스트 키만 허용.
-  #   허용: extra_args, timeout_ms, working_dir, cli_options.{ephemeral, enable_session_reuse, session_ttl_ms}
-  #   금지: cli_path, enabled, default_model, max_concurrent, app_server_options
-  #   예시:
+  # provider_overrides (optional): whitelist-based overrides per mapping.
+  #   Allowed: extra_args, timeout_ms, working_dir, cli_options.{ephemeral, enable_session_reuse, session_ttl_ms}
+  #   Forbidden: cli_path, enabled, default_model, max_concurrent, app_server_options
+  #   Example:
   #     provider_overrides:
   #       cli_options:
-  #         enable_session_reuse: true   # 이 매핑만 세션 재사용
-  #         session_ttl_ms: 3600000      # 1시간 TTL
-  #       extra_args: ["--skip-git-repo-check"]  # 기본 extra_args를 교체 (-s 정책은 첫 호출에만 적용됨)
-  #   Claude도 mode/channel_options override를 지원한다:
-  #     provider_overrides:
-  #       mode: "channel-worker"
-  #       channel_options:
-  #         endpoint_url: "http://127.0.0.1:8788"
-  #         isolation: "external"
-
-  # 초기 시드 매핑 — 프로바이더당 최대 2개. 필요하면 대시보드 Models 페이지에서 추가/수정.
-  # reasoning_effort, provider_overrides 등 고급 옵션은 별칭을 복제해서 직접 만들면 된다.
+  #         enable_session_reuse: true
+  #         session_ttl_ms: 3600000
+  #       extra_args: ["--skip-git-repo-check"]
 
   # Claude models
   - alias: "claude-sonnet"
@@ -302,7 +250,6 @@ model_mappings:
   - alias: "claude-haiku"
     provider: "claude"
     actual_model: "claude-haiku-4-5-20251001"
-  # Tool Bridge를 활성화한 경우 tool-calling 클라이언트는 이 요청 모델명 사용:
   # - alias: "claude-tools"
   #   provider: "claude-tools"
   #   actual_model: "claude-sonnet-4-6"
@@ -326,24 +273,21 @@ model_mappings:
   - alias: "copilot-gpt"
     provider: "copilot"
     actual_model: "gpt-5.4"
-  # Gemini CLI는 단종됨(agy로 대체) → gemini-pro/gemini-flash 매핑 제거.
-  # gemini provider를 다시 켜면 여기에 매핑을 추가하세요.
-  # Antigravity (agy) — 자동 최상위 + 한 단계 가벼운 명시적 모델.
+  # Antigravity (agy)
   - alias: "antigravity"
     provider: "agy"
-    actual_model: "antigravity"          # placeholder → --model 생략, agy 자동 선택
+    actual_model: "antigravity"          # Placeholder: omitting --model lets agy auto-select
   - alias: "gemini-3.6-flash-high"
     provider: "agy"
     actual_model: "gemini-3.6-flash"
     reasoning_effort: "high"
 
-  # xAI Grok Build — 현재 카탈로그에 별도의 하위 모델이 없어 하나만 등록.
+  # xAI Grok Build
   - alias: "grok-4.5"
     provider: "grok"
     actual_model: "grok-4.5"
 
-  # Moonshot AI Kimi Code — 최상위 K3 + 범용 coding 모델.
-  # actual_model은 API model ID가 아니라 CLI model alias다.
+  # Moonshot AI Kimi Code: actual_model is the CLI model alias
   - alias: "kimi-k3"
     provider: "kimi"
     actual_model: "kimi-code/k3"

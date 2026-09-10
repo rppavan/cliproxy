@@ -27,7 +27,7 @@ interface SummaryCardProps {
   value: string;
   sub?: React.ReactNode;
   accent: Accent;
-  valueClass?: string; // accent와 다른 값 색상이 필요할 때
+  valueClass?: string;
 }
 
 function SummaryCard({ label, value, sub, accent, valueClass }: SummaryCardProps) {
@@ -97,7 +97,6 @@ export function SummaryCards({ data }: Props) {
         }
         accent="amber"
       />
-      {/* 작은 보조 카드 행 — 키/매핑 */}
       <div className="col-span-full flex flex-wrap items-center gap-x-6 gap-y-2 px-1 text-xs">
         <span className="text-gray-400 dark:text-gray-500">
           <span className="text-gray-700 dark:text-gray-200 font-medium">{apiKeys.active}</span>

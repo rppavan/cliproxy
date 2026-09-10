@@ -17,7 +17,7 @@ const PROVIDER_KINDS: ProviderKind[] = ['builtin', 'tool-bridge', 'plugin', 'htt
 
 const COMPACT_THRESHOLD = 8;
 
-// kind별 시각 토큰. 다른 컬러를 쓰는 이유: status(녹/빨/노)와 충돌하지 않게.
+// Distinct color tokens per kind to avoid visual collision with green/red/yellow status indicators.
 const KIND_STYLE: Record<ProviderKind, { chip: string; dot: string; pill: string; order: number }> = {
   builtin: {
     chip: 'bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-300/60 dark:border-blue-500/30',
@@ -56,7 +56,6 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
     return { healthy, unhealthy, unknown };
   }, [providers]);
 
-  // kind별 카운트 (요약 pill 2번째 줄)
   const kindCounts = useMemo(() => {
     return providers.reduce(
       (acc, p) => {
@@ -68,8 +67,7 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
     );
   }, [providers]);
 
-  // 펼침 모드에서 kind별로 그룹화한 정렬된 목록
-  // 우선순위: 같은 kind 내에서 unhealthy → unknown → healthy 순으로 가독성 ↑
+  // Groups providers by kind and orders them by health (unhealthy first) for faster issue detection.
   const groupedByKind = useMemo(() => {
     const out: Record<ProviderKind, DashboardData['providers']> = {
       builtin: [],
@@ -117,7 +115,6 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
         )}
       </div>
 
-      {/* 1행: 상태 요약 (online/offline/unknown) — 운영 우선순위가 높은 KPI */}
       <div className="grid grid-cols-3 gap-2 mb-2">
         <SummaryPill
           dot="bg-green-400"
@@ -139,7 +136,6 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
         />
       </div>
 
-      {/* 2행: kind 분포 — 매핑 이해 보조 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         {PROVIDER_KINDS.map((k) => (
           <KindPill
@@ -152,7 +148,7 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
         ))}
       </div>
 
-      {/* 문제가 있는 프로바이더는 항상 표시 (컴팩트 모드여도). kind chip 포함 */}
+      {/* Always display unhealthy providers even in compact mode */}
       {compactMode && groups.unhealthy.length > 0 && (
         <div className="space-y-1 mb-3 pb-3 border-b border-gray-200 dark:border-gray-800">
           <p className="text-[11px] uppercase tracking-wider text-red-500 dark:text-red-400 font-semibold mb-1">
@@ -164,7 +160,6 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
         </div>
       )}
 
-      {/* 펼침 모드: kind별 서브헤더로 그룹 표시 */}
       {!compactMode && (
         <div className="space-y-3 mb-3 pb-3 border-b border-gray-200 dark:border-gray-800 max-h-72 overflow-y-auto pr-1">
           {PROVIDER_KINDS.map((k) => {
@@ -191,7 +186,6 @@ export function SystemStatus({ providers, cache, rateLimits, totalTokens }: Prop
         </div>
       )}
 
-      {/* 메타 정보 */}
       <div className="space-y-1.5 text-xs">
         <Meta label={t('dashboard.cache')} value={`${cache.activeEntries} ${t('dashboard.entries')}`} />
         <Meta label={t('dashboard.rateLimit')} value={`${rateLimits.global.rpm} RPM / ${rateLimits.global.rpd} RPD`} />
@@ -216,7 +210,6 @@ function SummaryPill({ dot, count, label, tone }: { dot: string; count: number; 
   );
 }
 
-// kind 분포 pill — count가 0이면 dim 처리
 function KindPill({ dot, count, label, tone }: { dot: string; count: number; label: string; tone: string }) {
   const dim = count === 0;
   return (
@@ -245,7 +238,6 @@ function ProviderRow({
     <div className="flex items-center justify-between text-sm">
       <div className="flex items-center gap-2 min-w-0">
         <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[p.status] ?? STATUS_DOT.unknown}`} />
-        {/* kind 칩 — 그룹화된 영역에서는 중복이라 숨김 */}
         {!hideKindChip && (
           <span
             className={`text-[9px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ${KIND_STYLE[kind].chip}`}

@@ -1,8 +1,7 @@
 import { ChannelBridge, type BridgeServerOptions } from './bridge-server.js';
 
-// 내장 Channel bridge standalone 진입점.
-// ChannelBridgeManager가 별도 프로세스로 spawn한다.
-// 시크릿(api_key)을 argv에 노출하지 않도록 옵션은 환경변수로 전달받는다.
+// Standalone entry point for the embedded Channel Bridge spawned as a child process by ChannelBridgeManager.
+// Options are passed via environment variables to prevent exposing secrets in argv.
 
 function envInt(name: string): number | undefined {
   const raw = process.env[name];
@@ -39,7 +38,7 @@ const bridge = new ChannelBridge(options);
 
 bridge.listen()
   .then(() => {
-    // manager는 이 라인을 stdout에서 감지하거나 /health polling으로 ready를 판단한다.
+    // The manager detects readiness from stdout or via /health polling.
     console.log(`[channel-bridge] listening on http://${options.host}:${options.port} (model=${options.defaultModel})`);
     process.send?.({ type: 'ready', port: options.port });
   })

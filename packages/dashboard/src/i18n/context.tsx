@@ -1,4 +1,3 @@
-// i18n React Context + Provider + useTranslation hook
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import { translations, type Lang } from './translations';
 
@@ -17,9 +16,9 @@ function getInitialLang(): Lang {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'en' || stored === 'ko') return stored;
   } catch {
-    // localStorage 접근 실패 시 기본값 사용
+    // Fall back to default if storage is unavailable
   }
-  return 'ko';
+  return 'en';
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -30,7 +29,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE_KEY, newLang);
     } catch {
-      // localStorage 저장 실패 무시
+      // Ignore storage write errors
     }
   }, []);
 

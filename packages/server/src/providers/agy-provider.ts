@@ -5,13 +5,11 @@ import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-// macOS ARG_MAX = 1MB. 여유 두어 800KB 한도 (gemini-provider와 동일 기준).
-// agy 1.1.7은 stdin으로 프롬프트 입력을 지원하지 않아 -p <arg>만 사용.
+// macOS ARG_MAX is 1MB; bounded to 800KB.
+// agy does not accept stdin for prompts; requires -p <arg>.
 const MAX_PROMPT_ARG_BYTES = 800_000;
 
-// 8-bit ANSI escape sequences 제거 (terminal color, cursor codes 등).
-// 일부 환경에서 응답 문자열에 색상 코드가 섞일 수 있어 방어적으로 제거한다.
-// 참고: 진짜 stdout이 TTY가 아니면 색상은 자동 비활성화되지만 방어적으로 스트립.
+// Strip ANSI escape sequences defensively in case terminal color codes pollute response strings.
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
 function stripAnsi(text: string): string {
@@ -34,8 +32,8 @@ interface AgyUsage {
 interface AgyResultPayload {
   status?: string;
   response?: string;
-  // --json-schema로 요청했을 때만 채워지는 스키마 준수 값.
-  // response는 프로즈와 스키마 외 필드가 섞여 유효한 JSON이 아닐 수 있어 이쪽이 정본이다.
+  // Schema-compliant value populated only when requested with --json-schema.
+  // Authoritative field since `response` may contain mixed prose and auxiliary fields.
   structured_output?: unknown;
   json_schema?: unknown;
   error?: string;
@@ -100,27 +98,23 @@ function normalizeEffort(effort: ExecuteOptions['reasoningEffort']): 'low' | 'me
 
 function stripEffortVariant(model: string): string {
   return model
-    // Gemini의 effort variant만 base slug로 바꾼다. gpt-oss-120b-medium처럼
-    // suffix가 모델 ID 자체인 다른 계열은 훼손하면 안 된다.
+    // Only strip Gemini effort suffixes; preserve models where the suffix is part of the model ID itself.
     .replace(/^(gemini-(?:3\.[56]-flash|3\.1-pro))-(low|medium|high)$/i, '$1')
     .replace(/\s+\((Low|Medium|High)\)$/i, '');
 }
 
-// agy 백엔드가 모델 선택을 위임받는 표시용 placeholder. 이 값일 때는 --model을 보내지 않아
-// agy가 자동 선택하도록 둔다(기존 동작 보존).
+// Placeholder indicating model selection is delegated to agy backend (omits --model flag).
 const MODEL_PLACEHOLDER = 'antigravity';
 
 /**
- * Google Antigravity CLI (agy) provider — 1.1.7 기준.
+ * Google Antigravity CLI (agy) provider.
  *
- * 1.1.7 사양:
- *  - `agy models`가 안정적인 effort variant slug를 출력하며, --model로 pin할 수 있다.
- *  - --effort low|medium|high 지원. CLI가 받는 model family slug + effort 조합으로 정규화해
- *    variant suffix와 별도 effort를 함께 넘길 때 생기는 충돌을 방지한다.
- *  - --output-format json|stream-json 지원. stream-json의 agent_response delta를 실제 스트리밍하고
- *    result usage(input/output/thinking/cache)를 OpenAI usage로 변환한다.
- *  - 세션 연속성은 매 호출 신규 (--continue/--conversation은 사용자가 extra_args로만 옵트인).
- *  - --dangerously-skip-permissions는 보안 영향이 커서 기본 미포함, 사용자가 extra_args로 옵트인.
+ * Specifications:
+ *  - `agy models` outputs stable effort variant slugs, pinned via `--model`.
+ *  - Supports `--effort low|medium|high`. Normalizes model family slug + effort combinations.
+ *  - Supports `--output-format json|stream-json`. Streams agent_response deltas and maps token usage.
+ *  - Session continuity defaults to fresh invocations unless opted in via extra_args.
+ *  - Permission bypass flags (e.g. --dangerously-skip-permissions) are excluded by default for security.
  */
 export class AgyProvider extends BaseProvider {
   readonly name = 'agy' as const;
@@ -130,14 +124,13 @@ export class AgyProvider extends BaseProvider {
     this.initParser();
   }
 
-  // agy CLI는 인수 한 줄로 prompt를 받음. messages는 단일 텍스트로 직렬화.
   protected buildArgs(
     options: ExecuteOptions,
     outputFormat: 'json' | 'stream-json' = 'json',
   ): string[] {
     const prompt = convertMessagesToSinglePrompt(options.messages);
 
-    // 스키마도 -p와 같은 인수 공간을 쓰므로 프롬프트와 합산해 ARG_MAX를 지킨다.
+    // Include schema argument size in ARG_MAX calculation since both share the argv buffer.
     const schemaArg = schemaArgument(options.chatResponseFormat);
     const argBytes = Buffer.byteLength(prompt, 'utf8')
       + (schemaArg ? Buffer.byteLength(schemaArg, 'utf8') : 0);
@@ -154,12 +147,11 @@ export class AgyProvider extends BaseProvider {
     // (extra_args + --model) before -p so options such as --print-timeout and
     // --model apply to this run instead of being interpreted as prompt text or
     // ignored after the prompt.
-    // 출력 형식은 파서 계약이므로 사용자의 오래된 extra_args보다 provider가 강제한 값을 우선한다.
+    // Output format is an internal parser contract and takes precedence over user extra_args.
     const extraArgs = withoutValueFlag(this.config.extra_args, ['--output-format']);
     const args = [...extraArgs, '--output-format', outputFormat];
 
-    // 매핑된 actual_model을 --model로 전달. placeholder면 생략해 agy 자동 선택.
-    // 사용자가 extra_args에 --model을 직접 넣었다면 그 값을 존중하고 중복 추가하지 않는다.
+    // Forward mapped actual_model via --model, unless placeholder or already set in extra_args.
     const requestedEffort = normalizeEffort(options.reasoningEffort);
     const model = requestedEffort
       ? stripEffortVariant(options.model?.trim() ?? '')
@@ -174,9 +166,8 @@ export class AgyProvider extends BaseProvider {
       args.push('--effort', requestedEffort);
     }
 
-    // OpenAI response_format.json_schema → agy --json-schema.
-    // OpenAI 래퍼(name/strict)가 아니라 중첩 schema만 전달해야 agy가 그대로 강제한다.
-    // 사용자가 extra_args로 스키마를 고정했다면 --model/--effort와 같은 정책으로 그 값을 존중한다.
+    // OpenAI response_format.json_schema -> agy --json-schema.
+    // Pass only nested schema to enforce constraint directly; respect user extra_args override.
     const userSetSchema = hasFlag(this.config.extra_args, ['--json-schema']);
     if (schemaArg && !userSetSchema) {
       args.push('--json-schema', schemaArg);
@@ -186,13 +177,11 @@ export class AgyProvider extends BaseProvider {
     return args;
   }
 
-  // agy는 --json-schema로 스키마만 강제할 수 있다. json_object/text는 강제 수단이 없어
-  // 미지원으로 선언하고 라우트가 X-Unsupported-Params로 알리게 한다.
+  // agy CLI only supports enforcing json_schema; json_object and text modes have no CLI flags.
   override supportsResponseFormat(format: ChatResponseFormat): boolean {
     return format.type === 'json_schema';
   }
 
-  // json 결과를 사용해 오류와 실제 token usage를 보존한다.
   override async execute(options: ExecuteOptions): Promise<ExecuteResult> {
     const args = this.buildArgs({ ...options, stream: false }, 'json');
     const { stdout, stderr, exitCode } = await this.runOnce(args, options.signal);
@@ -210,8 +199,7 @@ export class AgyProvider extends BaseProvider {
       throw new Error(`agy CLI failed: ${result.error || 'unknown error'}`);
     }
 
-    // 스키마를 요청했으면 response(프로즈 + 스키마 외 필드 혼재)가 아니라
-    // structured_output을 그대로 message.content로 돌려준다.
+    // Return structured_output directly as message.content when schema enforcement was requested.
     const content = wantsSchemaEnforcement(options.chatResponseFormat)
       ? requireStructuredOutput(result.structured_output, 'agy', 'structured_output')
       : stripAnsi(result.response ?? '').trim();
@@ -222,7 +210,6 @@ export class AgyProvider extends BaseProvider {
     };
   }
 
-  // stream-json의 agent_response delta를 OpenAI 호환 ProviderEvent로 변환한다.
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
     const args = this.buildArgs({ ...options, stream: true }, 'stream-json');
     const child = spawn(this.config.cli_path, args, {
@@ -238,9 +225,8 @@ export class AgyProvider extends BaseProvider {
     let terminalError: Error | undefined;
     let finalResult: AgyResultPayload | undefined;
     let emittedText = false;
-    // agy --help: stream-json에서 스키마는 "final result에만" 적용된다.
-    // 실측으로도 delta는 프로즈를 먼저 흘린 뒤 마지막 turn에서 스키마 외 필드가 섞인 JSON을 뱉으므로,
-    // 스키마 요청 시에는 delta를 내보내지 않고 최종 structured_output 하나만 emit한다.
+    // In stream-json mode, schema enforcement only applies to the final result event.
+    // Suppress interim text deltas and emit only the final structured_output.
     const schemaEnforced = wantsSchemaEnforcement(options.chatResponseFormat);
 
     child.stderr?.on('data', (data: Buffer) => stderrChunks.push(data));
@@ -301,18 +287,17 @@ export class AgyProvider extends BaseProvider {
       if (!finalResult) throw new Error('agy CLI stream ended without a result event');
 
       if (schemaEnforced) {
-        // 스키마 준수 JSON 하나만 내보낸다 (delta는 위에서 억제됨).
+        // Emit only the schema-compliant JSON (deltas suppressed above).
         yield { type: 'text_delta', text: requireStructuredOutput(finalResult.structured_output, 'agy', 'structured_output') };
       } else {
-        // Delta를 내보내지 않은 호환 구현에서도 최종 response를 잃지 않는다.
+        // Fallback to final response if no text deltas were emitted.
         const fallbackContent = stripAnsi(finalResult.response ?? '').trim();
         if (!emittedText && fallbackContent) {
           yield { type: 'text_delta', text: fallbackContent };
         }
       }
 
-      // 프로세스가 정상 종료된 뒤 완료 이벤트를 내보내야 소비자가 done에서 순회를
-      // 중단하더라도 CLI를 강제 종료하거나 임시 리소스를 조기에 정리하지 않는다.
+      // Emit done only after process exits cleanly to prevent early termination if consumer breaks early.
       yield {
         type: 'usage',
         usage: toTokenUsage(finalResult.usage, finalResult.response ?? ''),
@@ -332,8 +317,7 @@ export class AgyProvider extends BaseProvider {
     }
   }
 
-  // BaseProvider.runProcess는 private이라 재사용 불가 → 동일 패턴 인라인 구현.
-  // executeStream을 자체적으로 wrap하므로 streaming용 spawnProcess는 사용하지 않음.
+  // Inlined process execution because BaseProvider.runProcess is private.
   private runOnce(
     args: string[],
     signal?: AbortSignal,

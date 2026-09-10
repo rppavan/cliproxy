@@ -5,7 +5,7 @@ const BASE_URL = '/admin';
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { ...options?.headers as Record<string, string> };
   const adminToken = getStoredAdminToken();
-  // body가 있을 때만 Content-Type 설정 (DELETE 등 빈 body 시 Fastify 400 방지)
+  // Only set Content-Type when body is present to prevent Fastify 400 errors on empty body requests (e.g. DELETE)
   if (options?.body) {
     headers['Content-Type'] = 'application/json';
   }
@@ -30,7 +30,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// Dashboard (통합 데이터)
 export interface DashboardData {
   overview: {
     totalRequests: number;
@@ -128,7 +127,6 @@ export function fetchDashboard(days?: number) {
   return request<DashboardData>(`/dashboard${qs}`);
 }
 
-// Trend (시간대별 요청 추이)
 export interface TrendData {
   hours: number;
   trend: Array<{ slot: string; count: number; successCount: number; errorCount: number; tokens: number }>;
@@ -178,7 +176,6 @@ export function fetchLogs(params?: { limit?: number; offset?: number }) {
   }>(`/logs${qs ? `?${qs}` : ''}`);
 }
 
-// 기간별 로그 삭제
 export function deleteLogsByAge(days: number) {
   return request<{ deleted: number; cutoffDate: string; days: number }>(`/logs?days=${days}`, {
     method: 'DELETE',
@@ -188,7 +185,7 @@ export function deleteLogsByAge(days: number) {
 // Model Mappings
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-// 화이트리스트 기반 provider 옵션 오버라이드 (현재 codex CLI 모드 1차 지원)
+// Whitelist-based provider option overrides
 export interface ProviderOverrides {
   mode?: 'cli' | 'sdk' | 'app-server' | 'channel-worker';
   extra_args?: string[];
@@ -211,9 +208,9 @@ export interface ModelMapping {
   displayName: string | null;
   reasoningEffort: ReasoningEffort | null;
   providerOverrides: ProviderOverrides | null;
-  // null=상속(전역 default), true=노출, false=숨김
+  // null = inherit global default, true = include, false = omit
   includeReasoning: boolean | null;
-  // 백엔드 비표준 필드 패스스루 (chat_template_kwargs / top_k / think 등)
+  // Non-standard backend passthrough fields (e.g. chat_template_kwargs, top_k, think)
   extraBody: Record<string, unknown> | null;
   priority: number;
   enabled: boolean;
@@ -347,7 +344,6 @@ export function triggerHealthCheck(name: string) {
   });
 }
 
-// Provider Config (런타임 설정)
 export interface ClaudeSdkOptions {
   max_turns?: number;
   permission_mode?: string;
@@ -401,7 +397,7 @@ export interface ProviderConfig {
   channel_options?: ClaudeChannelOptions;
   app_server_options?: CodexAppServerOptions;
   cli_options?: CodexCliOptions;
-  // Tool Bridge 전용. API 응답은 런타임에서 사용하는 camelCase 형태다.
+  // Tool Bridge specific. API returns runtime camelCase properties.
   baseProvider?: string;
   driver?: 'claude-cli' | 'codex-cli' | 'grok-cli';
   strategy?: 'structured-output';
@@ -420,8 +416,7 @@ export function fetchProviderConfig(name: string) {
   return request<ProviderConfig>(`/providers/${name}/config`);
 }
 
-// Codex 한정: ~/.codex/config.toml에서 추출한 글로벌 기본값.
-// 매핑에 reasoning_effort를 비워두면 codex CLI가 이 값을 사용한다.
+// Extracted from ~/.codex/config.toml. Used by codex CLI when reasoning_effort is omitted in the mapping.
 export interface CodexCliDefaults {
   configPath: string;
   exists: boolean;
@@ -446,7 +441,6 @@ export function testProvider(name: string) {
   });
 }
 
-// --- Claude Channel bridge 라이프사이클 ---
 export interface ChannelBridgeStatus {
   running: boolean;
   managed: boolean;
@@ -661,7 +655,6 @@ export function updateValidationSettings(data: Partial<ValidationSettings>) {
   });
 }
 
-// Server Info (서버 설정 정보)
 export interface ServerInfo {
   serverPort: number;
   serverHost: string;
@@ -674,7 +667,6 @@ export function fetchServerInfo() {
   return request<ServerInfo>('/server-info');
 }
 
-// Generic Providers (커스텀 CLI 프로바이더)
 export interface GenericCliProviderConfig {
   enabled: boolean;
   cli_path: string;
@@ -683,22 +675,16 @@ export interface GenericCliProviderConfig {
   timeout_ms: number;
   extra_args: string[];
   working_dir?: string;
-  // 프롬프트 전달 방식
   prompt_mode: 'stdin' | 'arg';
   prompt_arg_template?: string;
-  // CLI 인자 템플릿
   args_template: string[];
-  // 출력 파싱
   output_mode: 'plain_text' | 'json_field';
   output_json_content_field?: string;
-  // 스트리밍
   streaming_enabled: boolean;
   stream_args_template?: string[];
   stream_content_field?: string;
   stream_done_indicator?: string;
-  // 헬스 체크
   health_check_args?: string[];
-  // 메타
   display_name: string;
   description?: string;
 }
@@ -734,7 +720,7 @@ export function deleteGenericProvider(name: string) {
   return request<{ success: boolean }>(`/generic-providers/${name}`, { method: 'DELETE' });
 }
 
-// 등록 전 커스텀 프로바이더 테스트 (임시 인스턴스로 실행)
+// Test custom provider before registration via temporary instance
 export function testGenericProvider(data: { name?: string } & GenericCliProviderConfig) {
   return request<ProviderTestResult>('/generic-providers/test', {
     method: 'POST',
@@ -742,7 +728,7 @@ export function testGenericProvider(data: { name?: string } & GenericCliProvider
   });
 }
 
-// HTTP Providers (OpenAI 호환 HTTP API 프로바이더)
+// HTTP Providers (OpenAI-compatible HTTP API providers)
 export type EndpointType = 'chat' | 'images' | 'tts' | 'embeddings' | 'rerank';
 
 export interface HttpProviderConfig {
@@ -753,7 +739,7 @@ export interface HttpProviderConfig {
   default_model: string;
   max_concurrent: number;
   timeout_ms: number;
-  // 미지정 시 'chat'으로 간주 (레거시 호환)
+  // Defaults to 'chat' for legacy compatibility
   endpoint_type?: EndpointType;
   display_name: string;
   description?: string;
@@ -803,7 +789,7 @@ export interface EndpointDetectResult {
   results: Array<{ type: EndpointType; ok: boolean; status: number | null; error?: string }>;
 }
 
-// base_url을 프로빙해 엔드포인트 타입(chat/embeddings/rerank)을 자동 감지한다.
+// Probes base_url to detect endpoint type (chat/embeddings/rerank)
 export function detectHttpProviderEndpoint(data: { name?: string } & Partial<HttpProviderConfig>) {
   return request<EndpointDetectResult>('/http-providers/detect', {
     method: 'POST',
@@ -811,8 +797,7 @@ export function detectHttpProviderEndpoint(data: { name?: string } & Partial<Htt
   });
 }
 
-// 이름에서 엔드포인트 타입 추론 (shared의 inferEndpointTypeFromName 미러링).
-// endpoint_type 메타데이터가 없는 레거시 프로바이더의 폴백.
+// Fallback heuristic for legacy providers lacking endpoint_type metadata
 export function inferEndpointTypeFromName(...names: Array<string | null | undefined>): EndpointType | null {
   const s = names.filter(Boolean).join(' ').toLowerCase();
   if (!s) return null;
@@ -823,7 +808,6 @@ export function inferEndpointTypeFromName(...names: Array<string | null | undefi
   return null;
 }
 
-// 명시적 endpoint_type 우선, 없으면 이름 휴리스틱, 그래도 불명이면 'chat'.
 export function effectiveEndpointType(
   explicit: EndpointType | null | undefined,
   ...names: Array<string | null | undefined>

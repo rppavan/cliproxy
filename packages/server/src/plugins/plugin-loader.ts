@@ -12,9 +12,7 @@ import type { ProviderRegistry } from '../providers/provider-registry.js';
 import type { BaseProvider } from '../providers/base-provider.js';
 import { registerParser } from '../utils/stream-transformer.js';
 
-// 플러그인 프로바이더를 BaseProvider 호환으로 래핑
-// 플러그인은 CliproxyPluginProvider 인터페이스만 구현하면 되지만,
-// 내부적으로는 BaseProvider처럼 동작해야 함
+// Adapts CliproxyPluginProvider to the internal BaseProvider interface.
 class PluginProviderAdapter {
   readonly name: string;
   readonly endpointTypes;
@@ -43,7 +41,7 @@ class PluginProviderAdapter {
     if (this.inner.executeStream) {
       yield* this.inner.executeStream(options);
     } else {
-      // executeStream 미구현 시 execute로 폴백
+      // Fall back to non-streaming execution when executeStream is not implemented.
       const result = await this.inner.execute(options);
       yield { type: 'delta' as const, content: result.content };
       yield { type: 'done' as const, usage: result.usage };
@@ -54,7 +52,6 @@ class PluginProviderAdapter {
     return this.inner.checkHealth();
   }
 
-  // 런타임 설정 변경 (대시보드에서 사용)
   updateConfig(partial: Partial<ProviderConfigYaml>): void {
     Object.assign(this.config, partial);
   }
@@ -64,11 +61,9 @@ class PluginProviderAdapter {
   }
 }
 
-// CliproxyPlugin 인터페이스 최소 검증
 function validatePlugin(mod: unknown, pluginPath: string): CliproxyPlugin {
   const plugin = mod as Record<string, unknown>;
 
-  // default export 또는 named export 탐색
   const candidate = (plugin.default ?? plugin) as Record<string, unknown>;
 
   if (typeof candidate.name !== 'string' || !candidate.name) {
@@ -84,7 +79,6 @@ function validatePlugin(mod: unknown, pluginPath: string): CliproxyPlugin {
   return candidate as unknown as CliproxyPlugin;
 }
 
-// 플러그인 설정을 ProviderConfigYaml로 변환
 function buildPluginConfig(entry: PluginEntry): ProviderConfigYaml {
   const c = entry.config ?? {};
   return {
@@ -102,8 +96,6 @@ export interface PluginLoadResult {
   failed: Array<{ path: string; error: string }>;
 }
 
-// 플러그인 디렉토리에서 동적 로드
-// baseDir: 플러그인 상대 경로의 기준 디렉토리 (config.yaml이 있는 디렉토리)
 export async function loadPlugins(
   entries: PluginEntry[],
   registry: ProviderRegistry,
@@ -129,7 +121,7 @@ export async function loadPlugins(
     }
 
     try {
-      // ESM dynamic import — pathToFileURL로 경로 변환하여 Windows/ESM 호환
+      // Use pathToFileURL for Windows and ESM dynamic import compatibility.
       const entryPoint = resolve(pluginDir, 'index.js');
       if (!existsSync(entryPoint)) {
         throw new Error(`Plugin entry point not found: "${entryPoint}". Ensure the plugin is built.`);
@@ -138,21 +130,17 @@ export async function loadPlugins(
       const mod = await import(pathToFileURL(entryPoint).href);
       const plugin = validatePlugin(mod, entry.path);
 
-      // 이름 충돌 검사
       if (registry.has(plugin.name)) {
         throw new Error(`Provider name "${plugin.name}" conflicts with an existing provider.`);
       }
 
       const config = buildPluginConfig(entry);
-      // 기본 설정 + 플러그인 고유 설정(status_url 등)을 모두 전달
       const pluginConfig: PluginProviderConfig = { ...config, ...(entry.config ?? {}) };
       const inner = plugin.createProvider(pluginConfig);
       const adapter = new PluginProviderAdapter(plugin, inner, config);
 
-      // BaseProvider 호환 객체로 등록
       registry.register(adapter as unknown as import('../providers/base-provider.js').BaseProvider);
 
-      // 커스텀 파서 등록 (있으면)
       if (plugin.createParser) {
         registerParser(plugin.name, () => plugin.createParser!());
       }

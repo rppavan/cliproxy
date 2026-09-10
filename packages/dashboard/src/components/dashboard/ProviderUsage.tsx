@@ -56,14 +56,12 @@ export function ProviderUsage({ providerStats }: Props) {
       </div>
 
       {useCompact ? (
-        // 컴팩트 리스트: 한 줄에 사용량 막대 + 핵심 지표
         <div className="space-y-1">
           {visible.map((p) => (
             <CompactRow key={p.provider} p={p} maxCount={maxCount} t={t} />
           ))}
         </div>
       ) : (
-        // 카드 그리드: 적은 데이터에 시각적 우선
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {visible.map((p) => (
             <CardItem key={p.provider} p={p} t={t} />

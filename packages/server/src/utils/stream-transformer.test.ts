@@ -218,7 +218,7 @@ describe('formatAsSSE', () => {
       'chatcmpl-test-123',
       'gpt-4',
     );
-    // SSE data 라인을 파싱하여 tool_call 객체 자체를 검사 (봉투의 id와 구분)
+    // Parse the SSE payload to inspect the nested tool_call object separately from the chunk envelope ID.
     const json = JSON.parse(result!.replace(/^data: /, '').trim());
     const tc = json.choices[0].delta.tool_calls[0];
     expect(tc.function.arguments).toBe('{"sel');

@@ -12,12 +12,10 @@ interface SettingsDeps {
 }
 
 export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsDeps): void {
-  // 현재 validation 설정 조회
   app.get('/admin/settings/validation', async (_request, reply) => {
     return reply.send(deps.getValidation());
   });
 
-  // validation 설정 변경 (DB에 저장 + 런타임 반영)
   app.put<{ Body: Partial<ValidationConfig> }>('/admin/settings/validation', async (request, reply) => {
     const current = deps.getValidation();
     const body = request.body;
@@ -27,11 +25,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsDeps)
       maxMessageLength: body.maxMessageLength ?? current.maxMessageLength,
       maxPromptLength: body.maxPromptLength ?? current.maxPromptLength,
       maxResponseLength: body.maxResponseLength ?? current.maxResponseLength,
-      // Fastify bodyLimit는 런타임 변경 불가 — 현재 값 유지
+      // Fastify bodyLimit cannot be modified at runtime; retain current setting
       bodyLimitBytes: current.bodyLimitBytes,
     };
 
-    // DB에 저장
     const db = getDatabase();
     const existing = await db.select().from(settings).where(eq(settings.key, VALIDATION_KEY)).limit(1);
     if (existing.length > 0) {
@@ -47,14 +44,12 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsDeps)
       });
     }
 
-    // 런타임에 즉시 반영
     deps.setValidation(updated);
 
     return reply.send(updated);
   });
 }
 
-// DB에서 저장된 validation 설정 로드 (없으면 null)
 export async function loadValidationFromDb(): Promise<ValidationConfig | null> {
   try {
     const db = getDatabase();
@@ -62,6 +57,6 @@ export async function loadValidationFromDb(): Promise<ValidationConfig | null> {
     if (result.length > 0) {
       return JSON.parse(result[0].value) as ValidationConfig;
     }
-  } catch { /* DB 아직 초기화 안 됐거나 파싱 실패 */ }
+  } catch {}
   return null;
 }

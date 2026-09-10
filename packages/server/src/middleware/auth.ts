@@ -13,7 +13,7 @@ export function getKeyPrefix(key: string): string {
   return key.substring(0, 12);
 }
 
-// 타이밍 공격 방지 문자열 비교
+// Constant-time string comparison to prevent timing attacks.
 function safeCompare(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   try {
@@ -27,17 +27,14 @@ export async function authMiddleware(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  // API 키 추출: x-api-key 헤더 또는 Authorization: Bearer 헤더
   const xApiKey = request.headers['x-api-key'] as string | undefined;
   const authHeader = request.headers.authorization;
 
   let apiKey: string | undefined;
 
   if (xApiKey) {
-    // Anthropic 스타일: x-api-key 헤더
     apiKey = xApiKey;
   } else if (authHeader?.startsWith('Bearer ')) {
-    // OpenAI 스타일: Authorization: Bearer <key>
     apiKey = authHeader.substring(7);
   }
 
@@ -85,7 +82,6 @@ export async function authMiddleware(
     });
   }
 
-  // 만료 체크
   if (keyRecord.expiresAt && new Date(keyRecord.expiresAt) < new Date()) {
     return reply.status(401).send({
       error: {
@@ -97,13 +93,12 @@ export async function authMiddleware(
     });
   }
 
-  // 마지막 사용 시간 업데이트 (fire-and-forget, 성능 최적화)
+  // Fire-and-forget update to avoid adding latency to the critical request path.
   db.update(apiKeys)
     .set({ lastUsedAt: new Date().toISOString() })
     .where(eq(apiKeys.id, keyRecord.id))
     .catch((err) => console.warn('[auth] lastUsedAt update failed:', err));
 
-  // 요청에 키 정보 첨부
   (request as FastifyRequest & { apiKeyId?: string }).apiKeyId = keyRecord.id;
   (request as FastifyRequest & { apiKeyRateLimits?: { rpm?: number | null; rpd?: number | null } }).apiKeyRateLimits = {
     rpm: keyRecord.rateLimitRpm,
@@ -111,7 +106,6 @@ export async function authMiddleware(
   };
 }
 
-// Admin API 인증
 export async function adminAuthMiddleware(
   request: FastifyRequest,
   reply: FastifyReply,

@@ -1,6 +1,5 @@
-// Claude Agent SDK 실행기
-// CLI 대신 @anthropic-ai/claude-agent-sdk의 query()를 사용하여 Claude Code 실행
-// lazy import로 SDK 미설치 시에도 서버 기동 가능
+// Executes Claude Code via @anthropic-ai/claude-agent-sdk query() instead of CLI binary.
+// Uses lazy import so server can start even when SDK is not installed.
 
 import type {
   ExecuteOptions,
@@ -12,7 +11,7 @@ import type {
 import { convertMessages } from '../utils/message-converter.js';
 import type { ClaudeSdkSessionManager } from './claude-sdk-session-manager.js';
 
-// SDK 타입 (lazy import이므로 여기서는 인터페이스로 정의)
+// SDK types defined locally since SDK is lazily imported
 interface SdkQueryOptions {
   abortController?: AbortController;
   model?: string;
@@ -39,10 +38,9 @@ export interface SdkExecutorConfig {
   timeoutMs: number;
   cleanEnv: Record<string, string | undefined>;
   cliPath: string;
-  // 세션 관련
   sessionManager?: ClaudeSdkSessionManager;
-  clientKey?: string;  // 세션 재사용용 클라이언트 식별자
-  // 스트리밍에서 세션 메타를 전달하기 위한 콜백
+  clientKey?: string; // Client identifier for session reuse
+  // Callback to emit session metadata in streaming mode
   onSdkMeta?: (meta: SdkMeta) => void;
 }
 
@@ -52,7 +50,6 @@ export interface SdkMeta {
   retried: boolean;
 }
 
-// lazy import: SDK 미설치 시에도 서버 기동 가능
 let sdkModule: { query: (params: { prompt: string; options?: SdkQueryOptions }) => AsyncGenerator<unknown, void> } | null = null;
 
 async function getSDK() {
@@ -67,7 +64,6 @@ async function getSDK() {
   }
 }
 
-// SDK query 옵션 빌드
 function buildQueryOptions(
   options: ExecuteOptions,
   config: SdkExecutorConfig,
@@ -78,12 +74,12 @@ function buildQueryOptions(
 
   const abortController = new AbortController();
 
-  // 외부 signal과 타임아웃을 결합
+  // Combine external abort signal with timeout
   if (options.signal) {
     options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
   }
   const timeoutId = setTimeout(() => abortController.abort(), config.timeoutMs);
-  // abort 시 타이머 정리
+  // Clear timer on abort
   abortController.signal.addEventListener('abort', () => clearTimeout(timeoutId), { once: true });
 
   const permissionMode = sdkOptions.permission_mode ?? 'bypassPermissions';
@@ -101,7 +97,7 @@ function buildQueryOptions(
     permissionMode,
     allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
     persistSession: sdkOptions.persist_session ?? false,
-    settingSources: [],  // SDK 격리 모드: 파일시스템 설정 미로드
+    settingSources: [],  // SDK isolation mode: do not load filesystem settings
     pathToClaudeCodeExecutable: config.cliPath,
     includePartialMessages: options.stream,
   };
@@ -113,12 +109,10 @@ function buildQueryOptions(
     queryOptions.disallowedTools = sdkOptions.disallowed_tools;
   }
 
-  // 세션 재사용
   if (resumeSessionId) {
     queryOptions.resume = resumeSessionId;
   }
 
-  // 시스템 프롬프트
   if (systemPrompt) {
     queryOptions.systemPrompt = systemPrompt;
   }
@@ -126,7 +120,6 @@ function buildQueryOptions(
   return { prompt: userPrompt, options: queryOptions };
 }
 
-// SDK 메시지에서 assistant 텍스트 추출
 function extractAssistantText(msg: Record<string, unknown>): string | null {
   if (msg.type !== 'assistant') return null;
 
@@ -149,14 +142,13 @@ function extractAssistantText(msg: Record<string, unknown>): string | null {
   return texts.length > 0 ? texts.join('') : null;
 }
 
-// SDK 메시지에서 스트리밍 delta 텍스트 추출 (partial message)
+// Extract streaming delta text from SDK stream_event
 function extractStreamDelta(msg: Record<string, unknown>): string | null {
   if (msg.type !== 'stream_event') return null;
 
   const event = msg.event as Record<string, unknown> | undefined;
   if (!event) return null;
 
-  // content_block_delta 이벤트에서 텍스트 추출
   if (event.type === 'content_block_delta') {
     const delta = event.delta as Record<string, unknown> | undefined;
     if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
@@ -167,7 +159,6 @@ function extractStreamDelta(msg: Record<string, unknown>): string | null {
   return null;
 }
 
-// SDK result 메시지에서 usage 추출
 function extractUsage(msg: Record<string, unknown>): TokenUsage | null {
   if (msg.type !== 'result') return null;
 
@@ -186,12 +177,11 @@ function extractUsage(msg: Record<string, unknown>): TokenUsage | null {
   };
 }
 
-// SDK 메시지에서 session_id 추출 (모든 메시지에 포함)
+// Extract session_id from SDK message (included across message types)
 function extractSessionId(msg: Record<string, unknown>): string | null {
   return typeof msg.session_id === 'string' ? msg.session_id : null;
 }
 
-// SDK 실행 결과에 세션 메타데이터 포함
 export interface SdkExecuteResult extends ExecuteResult {
   sdkMeta: {
     sessionId: string | null;
@@ -200,14 +190,13 @@ export interface SdkExecuteResult extends ExecuteResult {
   };
 }
 
-// Non-streaming 실행
 export async function executeSdk(
   options: ExecuteOptions,
   config: SdkExecutorConfig,
 ): Promise<SdkExecuteResult> {
   const sdk = await getSDK();
 
-  // 세션 재사용 시도
+  // Attempt session reuse
   const sessionReuse = config.sdkOptions.enable_session_reuse !== false;
   const existingSession = sessionReuse && config.sessionManager && config.clientKey
     ? config.sessionManager.get(config.clientKey, config.model)
@@ -226,30 +215,27 @@ export async function executeSdk(
     for await (const rawMsg of sdk.query(queryParams)) {
       const msg = rawMsg as Record<string, unknown>;
 
-      // session_id 캡처
       if (!capturedSessionId) {
         capturedSessionId = extractSessionId(msg);
       }
 
-      // assistant 메시지에서 텍스트 추출
       const text = extractAssistantText(msg);
       if (text !== null) {
-        content = text; // 마지막 assistant 메시지의 전체 텍스트 사용
+        content = text; // Use full text of latest assistant message
       }
 
-      // result 이벤트에서 usage 추출
       if (msg.type === 'result') {
         const extractedUsage = extractUsage(msg);
         if (extractedUsage) {
           usage = extractedUsage;
         }
 
-        // result 텍스트 (assistant 메시지가 없는 경우 폴백)
+        // Fallback to result text if no assistant message was received
         if (!content && typeof msg.result === 'string') {
           content = msg.result;
         }
 
-        // 에러 결과 처리
+        // Handle error result subtypes
         if (msg.is_error === true) {
           isError = true;
           const subtype = msg.subtype as string;
@@ -260,23 +246,20 @@ export async function executeSdk(
           }
         }
 
-        // stop_reason 매핑
         if (msg.stop_reason === 'max_tokens') {
           finishReason = 'length';
         }
       }
     }
 
-    // 세션 ID 저장 (재사용 활성화 시)
     if (capturedSessionId && sessionReuse && config.sessionManager && config.clientKey) {
       config.sessionManager.set(config.clientKey, capturedSessionId, config.model);
     }
   } catch (err) {
-    // 세션 관련 에러 시 세션 무효화 후 재시도 (1회)
+    // Retry once without session if a session-related error occurs (cold-start fallback)
     if (existingSession && config.sessionManager && config.clientKey) {
       config.sessionManager.invalidate(config.clientKey);
 
-      // cold-start fallback: 세션 없이 재시도
       retried = true;
       const retryParams = buildQueryOptions(options, config);
       content = '';
@@ -300,7 +283,7 @@ export async function executeSdk(
           }
         }
 
-        // 재시도 성공 시 새 세션 저장
+        // Save new session on successful retry
         if (capturedSessionId && config.sessionManager && config.clientKey) {
           config.sessionManager.set(config.clientKey, capturedSessionId, config.model);
         }
@@ -324,7 +307,7 @@ export async function executeSdk(
   };
 }
 
-// SDK stream_event에서 thinking delta 추출
+// Extract thinking delta from SDK stream_event
 function extractThinkingDelta(msg: Record<string, unknown>): string | null {
   if (msg.type !== 'stream_event') return null;
   const event = msg.event as Record<string, unknown> | undefined;
@@ -336,11 +319,11 @@ function extractThinkingDelta(msg: Record<string, unknown>): string | null {
   return null;
 }
 
-// SDK 메시지를 ProviderEvent[]로 변환
+// Transform SDK message to ProviderEvent array
 function sdkMsgToEvents(msg: Record<string, unknown>, isStreamMode: boolean): ProviderEvent[] {
   const events: ProviderEvent[] = [];
 
-  // stream_event: 실시간 delta (text 또는 thinking)
+  // Real-time delta (text or thinking)
   const textDelta = extractStreamDelta(msg);
   if (textDelta) {
     events.push({ type: 'text_delta', text: textDelta });
@@ -353,7 +336,7 @@ function sdkMsgToEvents(msg: Record<string, unknown>, isStreamMode: boolean): Pr
     return events;
   }
 
-  // assistant 메시지: 전체 텍스트 (stream_event 미사용 시 폴백)
+  // Fallback to full text from assistant message when stream_events are not used
   if (msg.type === 'assistant' && !isStreamMode) {
     const text = extractAssistantText(msg);
     if (text) {
@@ -362,7 +345,7 @@ function sdkMsgToEvents(msg: Record<string, unknown>, isStreamMode: boolean): Pr
     return events;
   }
 
-  // result 이벤트: 완료
+  // Completion result event
   if (msg.type === 'result') {
     if (msg.is_error === true) {
       const errors = msg.errors as string[] | undefined;
@@ -384,14 +367,13 @@ function sdkMsgToEvents(msg: Record<string, unknown>, isStreamMode: boolean): Pr
   return events;
 }
 
-// Streaming 실행
 export async function* executeStreamSdk(
   options: ExecuteOptions,
   config: SdkExecutorConfig,
 ): AsyncGenerator<ProviderEvent, void> {
   const sdk = await getSDK();
 
-  // 세션 재사용 시도
+  // Attempt session reuse
   const sessionReuse = config.sdkOptions.enable_session_reuse !== false;
   const existingSession = sessionReuse && config.sessionManager && config.clientKey
     ? config.sessionManager.get(config.clientKey, config.model)
@@ -416,7 +398,7 @@ export async function* executeStreamSdk(
       if (events.some(e => e.type === 'done')) break;
     }
 
-    // 세션 ID 저장 + 메타 콜백
+    // Persist session ID and emit metadata callback
     if (capturedSessionId && sessionReuse && config.sessionManager && config.clientKey) {
       config.sessionManager.set(config.clientKey, capturedSessionId, config.model);
     }
@@ -426,7 +408,7 @@ export async function* executeStreamSdk(
       retried: false,
     });
   } catch (err) {
-    // 세션 관련 에러 시 세션 무효화 후 재시도 (1회)
+    // Retry once without session on session errors
     if (existingSession && config.sessionManager && config.clientKey) {
       config.sessionManager.invalidate(config.clientKey);
 

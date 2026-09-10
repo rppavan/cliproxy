@@ -6,16 +6,13 @@ interface ModalProps {
   onClose: () => void;
   title?: ReactNode;
   subtitle?: ReactNode;
-  // 'sm' 480px, 'md' 720px, 'lg' 960px, 'xl' 1120px
   size?: 'sm' | 'md' | 'lg' | 'xl';
-  // 외부 클릭/ESC로 닫기 차단 (저장 중 등)
+  // Prevents closing via backdrop click or ESC (e.g. while saving)
   blockClose?: boolean;
-  // 닫기 전 확인 콜백 — false 반환 시 닫기 중단 (dirty form 등)
+  // Confirmation callback before closing; returning false aborts close (e.g. dirty form)
   onBeforeClose?: () => boolean;
   children: ReactNode;
-  // 헤더 우측 액션 슬롯 (예: provider 배지)
   headerActions?: ReactNode;
-  // body padding을 끄고 직접 제어하고 싶을 때
   unpadded?: boolean;
 }
 
@@ -41,7 +38,6 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const previousActiveRef = useRef<HTMLElement | null>(null);
 
-  // ESC 닫기 + 페이지 스크롤 잠금 + 포커스 복원
   useEffect(() => {
     if (!open) return;
 
@@ -57,7 +53,7 @@ export function Modal({
     };
     document.addEventListener('keydown', onKey);
 
-    // 모달 패널에 초기 포커스 (스크린리더 진입 안내)
+    // Initial focus on panel for screen reader announcements
     queueMicrotask(() => panelRef.current?.focus());
 
     return () => {
@@ -65,7 +61,6 @@ export function Modal({
       document.body.style.overflow = prevOverflow;
       previousActiveRef.current?.focus?.();
     };
-    // tryClose는 의존성에 굳이 넣지 않음 (open 변경마다 재구성)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -83,7 +78,7 @@ export function Modal({
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6"
       onMouseDown={(e) => {
-        // backdrop 직접 클릭만 닫기 (자식 드래그 종료가 backdrop에서 끝나는 경우 차단)
+        // Only direct backdrop clicks close the modal (prevents child drag-release outside from closing)
         if (e.target === e.currentTarget) tryClose();
       }}
     >

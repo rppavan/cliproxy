@@ -6,11 +6,9 @@ import { createApp } from './app.js';
 import { closeDatabase } from './db/client.js';
 import { killAllChildProcesses } from './providers/base-provider.js';
 
-// 프로젝트 루트 디렉토리 계산 (packages/server/src/index.ts → 3단계 상위)
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..', '..', '..');
 
-// 루트의 .env 로드
 dotenvConfig({ path: resolve(PROJECT_ROOT, '.env') });
 
 async function main() {
@@ -40,7 +38,6 @@ async function main() {
     process.exit(1);
   }
 
-  // 우아한 종료
   let isShuttingDown = false;
 
   const shutdown = async () => {
@@ -51,7 +48,7 @@ async function main() {
     isShuttingDown = true;
     console.log('\nShutting down...');
 
-    // 2초 내에 종료되지 않으면 강제 종료 (tsx의 5초 타임아웃보다 먼저 안전하게 종료)
+    // Force exit if graceful shutdown exceeds 2s, before tsx's 5s timeout triggers.
     const forceExitTimer = setTimeout(() => {
       console.error('Shutdown timed out after 2s, force exiting...');
       process.exit(1);

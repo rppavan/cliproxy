@@ -10,7 +10,6 @@ interface RateLimitEntry {
   resetAt: number;
 }
 
-// 인메모리 슬라이딩 윈도우 레이트 리미터
 export class RateLimiter {
   private minuteCounters = new Map<string, RateLimitEntry>();
   private dayCounters = new Map<string, RateLimitEntry>();
@@ -19,9 +18,8 @@ export class RateLimiter {
 
   constructor(config: RateLimitConfig) {
     this.config = config;
-    // DB에서 기존 카운터 복원
     this.loadFromDb().catch((err) => {
-      // DB 로드 실패해도 레이트 리미팅은 정상 동작
+      // Continue with in-memory counters if loading from DB fails.
       console.warn('[rate-limiter] loadFromDb failed:', err);
     });
     this.cleanupTimer = setInterval(() => this.cleanup(), 60_000);
@@ -33,13 +31,11 @@ export class RateLimiter {
 
   async destroy() {
     clearInterval(this.cleanupTimer);
-    // 종료 시 최종 flush
     await this.flushToDb();
   }
 
-  // 요청 가능 여부 확인 + 카운터 원자적 증가 (글로벌/키 + 프로바이더 한 번에).
-  // 폴백 루프가 없는 단일 시도 경로용. 폴백이 있는 라우트는
-  // checkGlobalAndKey(루프 밖 1회) + checkProvider(루프 안)를 분리 호출할 것.
+  // Single-attempt path without provider fallbacks.
+  // Routes with fallbacks must call checkGlobalAndKey once before the loop and checkProvider inside the loop.
   checkAndIncrement(
     apiKeyId: string,
     provider: string,
@@ -50,7 +46,7 @@ export class RateLimiter {
 
     const prov = this.checkProvider(provider);
     if (!prov.allowed) {
-      // 프로바이더 한도 실패 시 이미 증가된 글로벌/키 카운터를 되돌려 원자성 유지
+      // Revert global and key increments to preserve atomicity if the provider limit fails.
       this.rollbackGlobalAndKey(apiKeyId, keyLimits);
       return prov;
     }
@@ -58,26 +54,23 @@ export class RateLimiter {
     return { allowed: true };
   }
 
-  // 글로벌 + API 키 단위 한도 확인·증가. 요청당 1회(폴백 루프 진입 전)만 호출해야 한다.
-  // 폴백으로 여러 프로바이더를 시도해도 글로벌/키 카운터가 중복 차감되지 않도록 분리됨.
+  // Verify and increment global and API key limits once per request before entering provider fallback loops,
+  // preventing duplicate deductions across multiple fallback attempts.
   checkGlobalAndKey(
     apiKeyId: string,
     keyLimits?: { rpm?: number | null; rpd?: number | null },
   ): { allowed: boolean; retryAfterSeconds?: number } {
     const now = Date.now();
 
-    // 1. 글로벌 RPM
     const globalRpm = this.tryIncrement('global:rpm', this.config.global.rpm, now, 60_000, this.minuteCounters);
     if (!globalRpm.allowed) return globalRpm;
 
-    // 2. 글로벌 RPD
     const globalRpd = this.tryIncrement('global:rpd', this.config.global.rpd, now, 86_400_000, this.dayCounters);
     if (!globalRpd.allowed) {
       this.rollback('global:rpm', this.minuteCounters);
       return globalRpd;
     }
 
-    // 3. API 키별 RPM
     if (keyLimits?.rpm) {
       const keyRpm = this.tryIncrement(`key:${apiKeyId}:rpm`, keyLimits.rpm, now, 60_000, this.minuteCounters);
       if (!keyRpm.allowed) {
@@ -87,7 +80,6 @@ export class RateLimiter {
       }
     }
 
-    // 4. API 키별 RPD
     if (keyLimits?.rpd) {
       const keyRpd = this.tryIncrement(`key:${apiKeyId}:rpd`, keyLimits.rpd, now, 86_400_000, this.dayCounters);
       if (!keyRpd.allowed) {
@@ -101,8 +93,6 @@ export class RateLimiter {
     return { allowed: true };
   }
 
-  // 프로바이더 단위 RPM 한도 확인·증가. 폴백 루프 안에서 프로바이더별로 호출한다.
-  // 프로바이더 한도가 없으면 항상 allowed.
   checkProvider(provider: string): { allowed: boolean; retryAfterSeconds?: number } {
     const providerLimit = this.config.perProvider[provider]?.rpm;
     if (!providerLimit) return { allowed: true };
@@ -110,7 +100,6 @@ export class RateLimiter {
     return this.tryIncrement(`provider:${provider}:rpm`, providerLimit, now, 60_000, this.minuteCounters);
   }
 
-  // 글로벌/키 카운터 일괄 롤백 (checkGlobalAndKey로 증가시킨 뒤 후속 단계 실패 시)
   private rollbackGlobalAndKey(
     apiKeyId: string,
     keyLimits?: { rpm?: number | null; rpd?: number | null },
@@ -121,7 +110,6 @@ export class RateLimiter {
     if (keyLimits?.rpd) this.rollback(`key:${apiKeyId}:rpd`, this.dayCounters);
   }
 
-  // 원자적 check + increment: 한도 내이면 즉시 카운터 증가
   private tryIncrement(
     key: string,
     limit: number,
@@ -145,7 +133,6 @@ export class RateLimiter {
     return { allowed: true };
   }
 
-  // 후속 체크 실패 시 이미 증가된 카운터를 되돌림
   private rollback(key: string, counters: Map<string, RateLimitEntry>): void {
     const entry = counters.get(key);
     if (entry && entry.count > 0) {
@@ -161,14 +148,12 @@ export class RateLimiter {
     for (const [key, entry] of this.dayCounters) {
       if (now >= entry.resetAt) this.dayCounters.delete(key);
     }
-    // cleanup 주기(1분)마다 DB에 flush
     this.flushToDb().catch((err) => {
-      // DB flush 실패해도 레이트 리미팅은 정상 동작
+      // Failure to flush should not disrupt rate limiting.
       console.warn('[rate-limiter] flushToDb failed:', err);
     });
   }
 
-  // DB에서 기존 카운터 복원
   private async loadFromDb(): Promise<void> {
     try {
       const db = getDatabase();
@@ -182,10 +167,8 @@ export class RateLimiter {
         const counterKey = row.key.slice(RATE_LIMIT_PREFIX.length);
         try {
           const data = JSON.parse(row.value) as RateLimitEntry;
-          // resetAt이 아직 유효한 항목만 복원
           if (data.resetAt > now) {
-            // 윈도우 크기로 minute/day 카운터 구분
-            // resetAt - now > 60초면 day 카운터
+            // Differentiate minute vs day counter buckets by remaining window duration (> 2 minutes implies day).
             const remainingMs = data.resetAt - now;
             if (remainingMs > 120_000) {
               this.dayCounters.set(counterKey, data);
@@ -193,23 +176,19 @@ export class RateLimiter {
               this.minuteCounters.set(counterKey, data);
             }
           }
-        } catch {
-          // 파싱 실패한 항목은 무시
-        }
+        } catch {}
       }
     } catch {
-      // DB 접근 실패 시 인메모리 카운터로 시작
+      // Database errors fall back to starting with in-memory counters.
     }
   }
 
-  // 현재 카운터를 DB에 저장
   private async flushToDb(): Promise<void> {
     try {
       const db = getDatabase();
       const now = Date.now();
       const nowIso = new Date().toISOString();
 
-      // 유효한 카운터 수집
       const entries = new Map<string, RateLimitEntry>();
       for (const [key, entry] of this.minuteCounters) {
         if (now < entry.resetAt) entries.set(key, entry);
@@ -218,7 +197,6 @@ export class RateLimiter {
         if (now < entry.resetAt) entries.set(key, entry);
       }
 
-      // 기존 rate_limit: 키 전부 조회
       const existingRows = await db
         .select({ key: settings.key })
         .from(settings)
@@ -226,7 +204,6 @@ export class RateLimiter {
 
       const existingKeys = new Set(existingRows.map((r) => r.key));
 
-      // upsert: 유효한 카운터 저장
       for (const [key, entry] of entries) {
         const dbKey = `${RATE_LIMIT_PREFIX}${key}`;
         const value = JSON.stringify(entry);
@@ -246,12 +223,11 @@ export class RateLimiter {
         }
       }
 
-      // 만료된 항목 삭제
       for (const staleKey of existingKeys) {
         await db.delete(settings).where(eq(settings.key, staleKey));
       }
     } catch {
-      // DB 접근 실패가 레이트 리미팅을 중단시키지 않음
+      // Database errors should not disrupt rate limiting.
     }
   }
 }

@@ -65,7 +65,7 @@ describe.sequential('seedDatabase CLI model catalog migration', () => {
 
     const config = loadConfig(join(tempDir, 'missing-config.yaml'));
     await seedDatabase(config);
-    // 재시작 시에도 migration/catalog row가 중복되지 않아야 한다.
+    // Ensure migration and catalog rows are idempotent across restarts.
     await seedDatabase(config);
 
     const rows = await db.select().from(modelMappings);
@@ -115,7 +115,7 @@ describe.sequential('seedDatabase CLI model catalog migration', () => {
     const config = loadConfig(join(tempDir, 'missing-config.yaml'));
 
     await seedDatabase(config);
-    // 다음 시작에서도 catalog migration이 다시 모델을 늘리지 않아야 한다.
+    // Catalog migrations must remain idempotent and not add models on subsequent boots.
     await seedDatabase(config);
 
     const rows = await db

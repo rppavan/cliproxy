@@ -7,11 +7,10 @@ import type {
 } from '@star-cliproxy/shared';
 import { nanoid } from 'nanoid';
 
-// StreamParser는 @star-cliproxy/shared에서 re-export
 export type { StreamParser } from '@star-cliproxy/shared';
 
-// Claude stream-json 파서 (--output-format stream-json --verbose)
-// 실제 출력: init → assistant(전체 메시지) → rate_limit_event → result
+// Claude stream-json parser (--output-format stream-json --verbose)
+// Output sequence: init -> assistant -> rate_limit_event -> result
 export class ClaudeStreamParser implements StreamParser {
   parse(line: string): StreamChunk | null {
     const trimmed = line.trim();
@@ -20,11 +19,9 @@ export class ClaudeStreamParser implements StreamParser {
     try {
       const data = JSON.parse(trimmed);
 
-      // assistant 이벤트: 전체 응답 텍스트 포함
       if (data.type === 'assistant' && data.message) {
         const content = data.message.content;
         if (Array.isArray(content)) {
-          // content 배열에서 텍스트 추출
           const text = content
             .filter((c: { type: string }) => c.type === 'text')
             .map((c: { text: string }) => c.text)
@@ -34,7 +31,6 @@ export class ClaudeStreamParser implements StreamParser {
         return null;
       }
 
-      // result 이벤트: 토큰 사용량 포함
       if (data.type === 'result') {
         const u = data.usage;
         const usage = u ? {
@@ -58,7 +54,6 @@ export class ClaudeStreamParser implements StreamParser {
     try {
       const data = JSON.parse(trimmed);
 
-      // assistant 이벤트: content 배열의 각 블록을 개별 이벤트로 변환
       if (data.type === 'assistant' && data.message) {
         const content = data.message.content;
         if (!Array.isArray(content)) return [];
@@ -81,7 +76,6 @@ export class ClaudeStreamParser implements StreamParser {
         return events;
       }
 
-      // result 이벤트: usage + done
       if (data.type === 'result') {
         const events: ProviderEvent[] = [];
         const u = data.usage;
@@ -110,14 +104,13 @@ export class ClaudeStreamParser implements StreamParser {
   }
 }
 
-// thread_id 형식 검증 — codex는 UUID(8-4-4-4-12) 또는 그 변형(접두/접미) 사용.
-// 보안: stdout에서 추출한 임의 문자열을 SessionManager 키로 쓰기 전 형식 검증으로 인젝션 방어.
+// Validate thread_id format before using stdout-extracted strings as SessionManager keys to prevent key injection.
 function isLikelyUuid(value: string): boolean {
   return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
 }
 
-// Codex JSONL 파서 (--json 플래그)
-// 실제 출력: thread.started → turn.started → item.completed(텍스트) → turn.completed(usage)
+// Codex JSONL parser (--json flag)
+// Output sequence: thread.started -> turn.started -> item.completed -> turn.completed
 export class CodexStreamParser implements StreamParser {
   parse(line: string): StreamChunk | null {
     const trimmed = line.trim();
@@ -126,7 +119,6 @@ export class CodexStreamParser implements StreamParser {
     try {
       const data = JSON.parse(trimmed);
 
-      // item.completed: 응답 텍스트 포함 (에러 아이템은 제외)
       if (data.type === 'item.completed' && data.item) {
         if (data.item.type === 'error') {
           return { type: 'error', error: data.item.message ?? 'Codex item error' };
@@ -136,7 +128,6 @@ export class CodexStreamParser implements StreamParser {
         return null;
       }
 
-      // turn.completed: 토큰 사용량
       if (data.type === 'turn.completed') {
         const u = data.usage;
         const usage = u ? {
@@ -147,7 +138,6 @@ export class CodexStreamParser implements StreamParser {
         return { type: 'done', usage };
       }
 
-      // turn.failed: 에러
       if (data.type === 'turn.failed' || data.type === 'error') {
         return { type: 'error', error: data.error?.message ?? data.message ?? 'Codex error' };
       }
@@ -167,8 +157,7 @@ export class CodexStreamParser implements StreamParser {
     try {
       const data = JSON.parse(trimmed);
 
-      // thread.started: 첫 라인에서 thread_id 노출. CodexProvider wrapper가 가로채 SessionManager.set 수행.
-      // thread_id / threadId / thread.id 3가지 키 경로 모두 처리 (codex 버전별 차이 대응).
+      // Handle thread_id, threadId, and thread.id to support variations across Codex CLI versions.
       if (data.type === 'thread.started') {
         const tid = typeof data.thread_id === 'string' ? data.thread_id
           : typeof data.threadId === 'string' ? data.threadId
@@ -218,9 +207,8 @@ export class CodexStreamParser implements StreamParser {
   }
 }
 
-// Gemini stream-json 파서 (-o stream-json)
-// 실제 출력: init → message(user) → message(delta=true, assistant) → result
-// Gemini는 진짜 실시간 delta를 지원함
+// Gemini stream-json parser (-o stream-json)
+// Output sequence: init -> message(user) -> message(delta=true, assistant) -> result
 export class GeminiStreamParser implements StreamParser {
   parse(line: string): StreamChunk | null {
     const trimmed = line.trim();
@@ -229,14 +217,12 @@ export class GeminiStreamParser implements StreamParser {
     try {
       const data = JSON.parse(trimmed);
 
-      // assistant delta 메시지: 실시간 텍스트 조각
       if (data.type === 'message' && data.role === 'assistant' && data.delta === true) {
         const content = data.content ?? '';
         if (content) return { type: 'delta', content };
         return null;
       }
 
-      // result 이벤트: 토큰 사용량
       if (data.type === 'result') {
         const stats = data.stats;
         const usage = stats ? {
@@ -290,34 +276,27 @@ export class GeminiStreamParser implements StreamParser {
   }
 }
 
-// --- SSE 변환 ---
-
-// ProviderEvent 전용 타입만 존재하는지 확인 (StreamChunk과 겹치지 않는 type)
 const PROVIDER_EVENT_ONLY_TYPES = new Set(['text_delta', 'tool_use', 'thinking', 'usage']);
 
 export interface FormatAsSseOptions {
-  // true면 thinking 이벤트를 delta.reasoning_content SSE로 직렬화. false/생략이면 thinking 무시.
+  // When true, serializes thinking events into delta.reasoning_content SSE chunks.
   includeReasoning?: boolean;
 }
 
-// StreamChunk 또는 ProviderEvent를 OpenAI SSE 형식으로 변환
 export function formatAsSSE(
   event: ProviderEvent | StreamChunk,
   requestId: string,
   model: string,
   options: FormatAsSseOptions = {},
 ): string | null {
-  // ProviderEvent 전용 타입이면 ProviderEvent 경로
   if (PROVIDER_EVENT_ONLY_TYPES.has(event.type)) {
     return formatProviderEventAsSSE(event as ProviderEvent, requestId, model, options);
   }
 
-  // done/error 타입은 ProviderEvent와 StreamChunk 공통이므로 finishReason 필드로 판별
   if ('finishReason' in event) {
     return formatProviderEventAsSSE(event as ProviderEvent, requestId, model, options);
   }
 
-  // 레거시 StreamChunk 처리
   const chunk = event as StreamChunk;
 
   if (chunk.type === 'delta') {
@@ -357,7 +336,6 @@ export function formatAsSSE(
   return null;
 }
 
-// ProviderEvent → OpenAI SSE 변환
 function formatProviderEventAsSSE(
   event: ProviderEvent,
   requestId: string,
@@ -397,20 +375,18 @@ function formatProviderEventAsSSE(
       });
 
     case 'thinking':
-      // include_reasoning=true일 때만 delta.reasoning_content로 직렬화 (vLLM/sglang 호환 비표준 확장).
-      // 일반 OpenAI SDK는 모르는 필드 무시하므로 안전.
+      // Serialize to delta.reasoning_content only when includeReasoning is enabled (vLLM/sglang-compatible extension).
       if (!options.includeReasoning) return null;
       return makeChunk({ reasoning_content: event.text });
 
     case 'usage':
-      // OpenAI에서는 stream_options.include_usage로 처리 → 무시
       return null;
 
     case 'error':
       return null;
 
     case 'done': {
-      // tool_use → OpenAI 'tool_calls' finish_reason (에이전트가 도구 실행 여부 판단에 사용).
+      // Map tool_use to OpenAI finish_reason 'tool_calls' so agents can detect tool invocation.
       const finishReason = event.finishReason === 'tool_use' ? 'tool_calls'
         : event.finishReason === 'length' ? 'length'
         : 'stop';
@@ -426,9 +402,8 @@ export function createRequestId(): string {
   return `chatcmpl-proxy-${nanoid(24)}`;
 }
 
-// 플러그인용 기본 파서: 각 라인을 그대로 텍스트 delta로 변환
-// OpenCode JSON 파서 (opencode run --format json)
-// 실제 출력: step_start → reasoning? → text → step_finish(tokens) / error
+// OpenCode JSON parser (opencode run --format json)
+// Output sequence: step_start -> reasoning? -> text -> step_finish / error
 export class OpenCodeStreamParser implements StreamParser {
   parse(line: string): StreamChunk | null {
     const trimmed = line.trim();
@@ -520,22 +495,17 @@ export class PlainTextParser implements StreamParser {
   }
 }
 
-// 파서 레지스트리: 프로바이더 이름 → 파서 팩토리
 const parserRegistry = new Map<string, () => StreamParser>();
 
-// 빌트인 파서 등록
 parserRegistry.set('claude', () => new ClaudeStreamParser());
 parserRegistry.set('codex', () => new CodexStreamParser());
 parserRegistry.set('gemini', () => new GeminiStreamParser());
-// AgyProvider가 stream-json을 직접 처리하므로 line parser는 fallback 계약용.
+// Providers handling stream-json directly register PlainTextParser as a fallback contract.
 parserRegistry.set('agy', () => new PlainTextParser());
-// GrokProvider가 json/streaming-json을 직접 처리하므로 line parser는 fallback 계약용.
 parserRegistry.set('grok', () => new PlainTextParser());
-// KimiProvider가 stream-json assistant 레코드를 직접 처리하므로 fallback 계약용.
 parserRegistry.set('kimi', () => new PlainTextParser());
 parserRegistry.set('opencode', () => new OpenCodeStreamParser());
 
-// 플러그인에서 커스텀 파서를 등록할 때 사용
 export function registerParser(provider: string, factory: () => StreamParser): void {
   parserRegistry.set(provider, factory);
 }
@@ -543,6 +513,5 @@ export function registerParser(provider: string, factory: () => StreamParser): v
 export function getParserForProvider(provider: string): StreamParser {
   const factory = parserRegistry.get(provider);
   if (factory) return factory();
-  // 등록되지 않은 프로바이더는 PlainText 파서로 폴백
   return new PlainTextParser();
 }

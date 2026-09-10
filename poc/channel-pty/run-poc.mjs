@@ -1,6 +1,5 @@
-// PoC 드라이버: node-pty로 interactive claude 세션(-p 없음)을 띄우고,
-// 프롬프트를 PTY stdin에 주입한 뒤, Claude가 report_result MCP tool로
-// 결과를 회수하는 왕복이 실제로 되는지 검증한다.
+// Spawns interactive Claude session via node-pty, injects prompt into PTY stdin,
+// and validates round-trip result capture via report_result MCP tool.
 import pty from 'node-pty';
 import { writeFileSync, existsSync, readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const projectRoot = join(here, '..', '..'); // star-cliproxy (claude로 작업한 신뢰 폴더)
+const projectRoot = join(here, '..', '..');
 const work = mkdtempSync(join(tmpdir(), 'channel-poc-'));
 const RESULT_FILE = join(work, 'result.json');
 const MCP_CONFIG = join(work, 'mcp.json');
@@ -24,7 +23,7 @@ writeFileSync(MCP_CONFIG, JSON.stringify({
   },
 }));
 
-// 중첩 claude 감지 방지: 부모 Claude Code 세션의 환경변수 제거 (provider.getCleanEnv와 동일)
+// Strip parent Claude Code session variables to prevent nested session detection.
 const cleanEnv = { ...process.env };
 for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ACCESS_TOKEN', 'CLAUDE_CODE_SSE_PORT', 'CLAUDE_CODE_ENABLE_TASKS', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS']) {
   delete cleanEnv[k];
@@ -58,7 +57,7 @@ const iv = setInterval(() => {
     try { term.kill(); } catch { /* ignore */ }
     process.exit(0);
   }
-  // TUI가 뜬 뒤 한 번만 프롬프트 주입
+  // Wait for interactive TUI to render before injecting prompt.
   if (!injected && Date.now() - startedAt > 5000) {
     console.log('\n[poc] >>> injecting prompt into PTY stdin\n');
     term.write(PROMPT);

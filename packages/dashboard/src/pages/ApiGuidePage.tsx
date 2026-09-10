@@ -43,13 +43,13 @@ export default function ApiGuidePage() {
 
   useEffect(() => {
     fetchAvailableModels().then(setModels).catch(() => {});
-    // 서버에서 실제 포트 정보를 가져와서 현재 호스트와 조합
+    // Fetch runtime ports from server and combine with current browser hostname.
     fetchServerInfo().then((info) => {
       const host = window.location.hostname;
       setApiBase(`http://${host}:${info.serverPort}`);
       setDashboardUrl(`http://${host}:${info.dashboardPort}`);
     }).catch(() => {
-      // 실패 시 현재 브라우저 호스트 기반 추정
+      // Fall back to default ports using current browser host if server probe fails.
       const host = window.location.hostname;
       setApiBase(`http://${host}:8300`);
       setDashboardUrl(window.location.origin);
@@ -65,7 +65,6 @@ export default function ApiGuidePage() {
         <p className="text-gray-500 dark:text-gray-400 mt-1">{t('guide.subtitle')}</p>
       </div>
 
-      {/* 개요 */}
       <Section title={t('guide.overview')}>
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
@@ -90,7 +89,6 @@ export default function ApiGuidePage() {
         </div>
       </Section>
 
-      {/* 인증 */}
       <Section title={t('guide.authentication')}>
         <p className="text-sm text-gray-600 dark:text-gray-400">{t('guide.authDescription')}</p>
         <CodeBlock title={t('guide.authHeaderFormat')}>
@@ -103,7 +101,6 @@ export default function ApiGuidePage() {
         </div>
       </Section>
 
-      {/* 사용 가능한 모델 */}
       <Section title={t('guide.availableModels')}>
         <p className="text-sm text-gray-600 dark:text-gray-400">
           {t('guide.availableModelsDescription', { link: '' }).split('{link}')[0]}
@@ -135,7 +132,6 @@ export default function ApiGuidePage() {
         </div>
       </Section>
 
-      {/* 엔드포인트 */}
       <Section title={t('guide.endpoints')}>
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg px-4 py-2">
@@ -156,7 +152,6 @@ export default function ApiGuidePage() {
         </div>
       </Section>
 
-      {/* 사용 예제 */}
       <Section title={t('guide.usageExamples')}>
 
         <CodeBlock title={t('guide.curlNonStreaming')} lang="bash">
@@ -243,7 +238,6 @@ for await (const chunk of stream) {
         </CodeBlock>
       </Section>
 
-      {/* 비전 / 이미지 입력 */}
       <Section title={t('guide.vision')}>
         <p className="text-sm text-gray-600 dark:text-gray-400">{t('guide.visionDescription')}</p>
         <CodeBlock title={t('guide.visionAgyExample')} lang="bash">
@@ -262,7 +256,6 @@ for await (const chunk of stream) {
         </div>
       </Section>
 
-      {/* 응답 형식 */}
       <Section title={t('guide.responseFormat')}>
         <CodeBlock title={t('guide.nonStreamingResponse')}>
 {`{
@@ -297,7 +290,6 @@ data: [DONE]`}
         </CodeBlock>
       </Section>
 
-      {/* 에러 처리 */}
       <Section title={t('guide.errorHandling')}>
         <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
           <p>{t('guide.errorDescription')}</p>
@@ -332,7 +324,6 @@ data: [DONE]`}
         </CodeBlock>
       </Section>
 
-      {/* 레이트 리밋 */}
       <Section title={t('guide.rateLimits')}>
         <p className="text-sm text-gray-600 dark:text-gray-400">{t('guide.rateLimitsDescription')}</p>
         <div className="grid grid-cols-3 gap-3 text-sm">
@@ -351,7 +342,6 @@ data: [DONE]`}
         </div>
       </Section>
 
-      {/* 팁 */}
       <Section title={t('guide.tips')}>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 space-y-2 text-sm text-gray-600 dark:text-gray-400">
           <ul className="list-disc list-inside space-y-2">

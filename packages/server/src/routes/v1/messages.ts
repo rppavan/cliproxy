@@ -27,7 +27,6 @@ interface MessagesDeps {
   debug: DebugService;
 }
 
-// Anthropic 요청 타입
 interface AnthropicMessage {
   role: 'user' | 'assistant';
   content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
@@ -47,25 +46,23 @@ interface AnthropicMessagesRequest {
   tool_choice?: unknown;
   thinking?: unknown;
   metadata?: unknown;
-  reasoning_effort?: string;  // 모델 매핑보다 우선 적용
+  reasoning_effort?: string; // Overrides model mapping
 }
 
-// null byte 제거 (CLI 인젝션 방지)
+// Strip null bytes to prevent CLI argument injection.
 function sanitizeString(str: string): string {
   return str.replace(/\x00/g, '');
 }
 
-// CLI 에러 메시지에서 내부 정보 제거 (파일 경로, 스택 트레이스 등)
-// 클라이언트에 노출되는 에러 응답에만 적용 — 내부 로그는 원본 유지
+// Strips file paths and stack frames from error messages returned to clients.
 function sanitizeProviderError(message: string): string {
   return message
-    .replace(/\/[\w/.@-]+/g, '[path]')        // 파일/디렉토리 경로 마스킹
-    .replace(/at\s+\S+\s*\(.*?\)/g, '')       // 스택 트레이스 제거
+    .replace(/\/[\w/.@-]+/g, '[path]')
+    .replace(/at\s+\S+\s*\(.*?\)/g, '')
     .trim()
-    .substring(0, 200);                        // 길이 제한
+    .substring(0, 200);
 }
 
-// Anthropic 에러 응답 형식
 function makeAnthropicError(type: string, message: string) {
   return {
     type: 'error',
@@ -73,7 +70,6 @@ function makeAnthropicError(type: string, message: string) {
   };
 }
 
-// finishReason 변환 (내부 → Anthropic)
 function toAnthropicStopReason(finishReason: string): string {
   switch (finishReason) {
     case 'stop': return 'end_turn';
@@ -83,7 +79,6 @@ function toAnthropicStopReason(finishReason: string): string {
   }
 }
 
-// Anthropic content를 string으로 정규화
 function normalizeContent(content: string | Array<{ type: string; text?: string; [key: string]: unknown }>): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -95,7 +90,6 @@ function normalizeContent(content: string | Array<{ type: string; text?: string;
   return '';
 }
 
-// system 필드를 string으로 정규화
 function normalizeSystem(system: string | Array<{ type: string; text: string }>): string {
   if (typeof system === 'string') return system;
   if (Array.isArray(system)) {
@@ -108,10 +102,8 @@ function normalizeSystem(system: string | Array<{ type: string; text: string }>)
 }
 
 /**
- * Anthropic SSE 이벤트 작성 헬퍼
- * 클라이언트 연결 끊김 시 write 에러로 프로세스 크래시 방지:
- * destroyed/writableEnded 체크 + try-catch 적용
- * @returns 쓰기 성공 여부 (false = 연결 끊김)
+ * Writes Anthropic SSE events safely, guarding against unhandled write errors
+ * when a client disconnects prematurely.
  */
 function writeSSE(raw: NodeJS.WritableStream, event: string, data: unknown): boolean {
   try {
@@ -122,7 +114,6 @@ function writeSSE(raw: NodeJS.WritableStream, event: string, data: unknown): boo
   }
 }
 
-// 메시지 ID 생성
 function createMessageId(): string {
   return `msg_${nanoid(24)}`;
 }
@@ -141,8 +132,6 @@ export function registerMessagesRoute(
       const messageId = createMessageId();
       const body = request.body;
 
-      // === 입력 검증 ===
-
       if (!body.model) {
         return reply.status(400).send(makeAnthropicError('invalid_request_error', 'model is required.'));
       }
@@ -159,17 +148,12 @@ export function registerMessagesRoute(
         return reply.status(400).send(makeAnthropicError('invalid_request_error', 'max_tokens is required.'));
       }
 
-      // 메시지 수 제한
       if (body.messages.length > v.maxMessageCount) {
         return reply.status(400).send(makeAnthropicError('invalid_request_error', `Too many messages: ${body.messages.length}. Maximum is ${v.maxMessageCount}.`));
       }
 
-      // === 요청 변환 (Anthropic → 내부) ===
-
-      // 내부 메시지 배열 구성
       const internalMessages: Array<{ role: 'system' | 'user' | 'assistant' | 'developer'; content: string }> = [];
 
-      // system 필드 → messages 배열 맨 앞에 삽입
       if (body.system) {
         const systemContent = sanitizeString(normalizeSystem(body.system));
         if (systemContent) {
@@ -177,21 +161,17 @@ export function registerMessagesRoute(
         }
       }
 
-      // messages 변환 + 검증
       let totalPromptLength = 0;
       for (let i = 0; i < body.messages.length; i++) {
         const msg = body.messages[i];
 
-        // role 검증: Anthropic은 user, assistant만 허용
         if (msg.role !== 'user' && msg.role !== 'assistant') {
           return reply.status(400).send(makeAnthropicError('invalid_request_error', `Invalid role "${msg.role}" at messages[${i}]. Allowed: user, assistant`));
         }
 
-        // content 정규화
         let content = normalizeContent(msg.content);
         content = sanitizeString(content);
 
-        // 개별 메시지 길이 제한
         if (content.length > v.maxMessageLength) {
           return reply.status(400).send(makeAnthropicError('invalid_request_error', `messages[${i}].content too long: ${content.length} chars. Maximum is ${v.maxMessageLength}.`));
         }
@@ -200,15 +180,12 @@ export function registerMessagesRoute(
         internalMessages.push({ role: msg.role, content });
       }
 
-      // 전체 프롬프트 총 길이 제한
       if (totalPromptLength > v.maxPromptLength) {
         return reply.status(400).send(makeAnthropicError('invalid_request_error', `Total prompt length too long: ${totalPromptLength} chars. Maximum is ${v.maxPromptLength}.`));
       }
 
-      // model명 sanitize
       body.model = sanitizeString(body.model);
 
-      // 미지원 파라미터 감지
       const unsupportedParams: string[] = [];
       if (body.temperature != null) unsupportedParams.push('temperature');
       if (body.top_p != null) unsupportedParams.push('top_p');
@@ -219,14 +196,12 @@ export function registerMessagesRoute(
       if (body.thinking != null) unsupportedParams.push('thinking');
       if (body.metadata != null) unsupportedParams.push('metadata');
 
-      // === 라우팅 ===
-
       const routes = await deps.router.resolve(body.model);
       if (routes.length === 0) {
         return reply.status(400).send(makeAnthropicError('invalid_request_error', `Model "${body.model}" not found. Check model mappings.`));
       }
 
-      // 요청 body의 reasoning_effort가 있으면 화이트리스트 검증 후 model_mapping 값보다 우선 적용
+      // Overrides model mapping when reasoning_effort is explicitly specified in the request body.
       let bodyReasoningEffort: ReasoningEffort | undefined;
       if (body.reasoning_effort != null) {
         const normalized = typeof body.reasoning_effort === 'string'
@@ -242,10 +217,9 @@ export function registerMessagesRoute(
 
       const apiKeyId = (request as unknown as { apiKeyId?: string }).apiKeyId;
       const keyLimits = (request as unknown as { apiKeyRateLimits?: { rpm?: number | null; rpd?: number | null } }).apiKeyRateLimits;
-      // X-Cliproxy-Session-Id 헤더 있으면 그 값을, 없으면 apiKeyId로 clientKey 결정 (codex CLI resume 세션 분리용)
+      // Prefer X-Cliproxy-Session-Id for Codex session reuse isolation, falling back to apiKeyId.
       const clientKey = extractClientKey(request, apiKeyId);
 
-      // === 캐시 조회 (non-streaming만) ===
       const requestHash = !body.stream
         ? deps.cache.generateHash(body.model, internalMessages)
         : undefined;
@@ -279,14 +253,12 @@ export function registerMessagesRoute(
         }
       }
 
-      // === 레이트 리밋: 글로벌/키 단위는 요청당 1회만 차감 (폴백 루프 진입 전) ===
+      // Consume global/key rate limit quota once per request before attempting provider fallbacks.
       const gkResult = deps.rateLimiter.checkGlobalAndKey(apiKeyId ?? 'anonymous', keyLimits);
       if (!gkResult.allowed) {
         reply.header('Retry-After', String(gkResult.retryAfterSeconds ?? 30));
         return reply.status(429).send(makeAnthropicError('rate_limit_error', `Rate limit exceeded. Retry after ${gkResult.retryAfterSeconds} seconds.`));
       }
-
-      // === 폴백 루프 ===
 
       let lastError: Error | null = null;
       let rateLimitRetryAfter: number | null = null;
@@ -298,7 +270,6 @@ export function registerMessagesRoute(
           continue;
         }
 
-        // 프로바이더 단위 한도는 시도하는 프로바이더별로 차감. 초과 시 다음 프로바이더로 폴백.
         const provRate = deps.rateLimiter.checkProvider(route.provider);
         if (!provRate.allowed) {
           rateLimitRetryAfter = provRate.retryAfterSeconds ?? 30;
@@ -312,7 +283,6 @@ export function registerMessagesRoute(
           continue;
         }
 
-        // 활성 요청 추적 시작
         deps.activeRequests.start({
           requestId,
           modelAlias: body.model,
@@ -323,7 +293,6 @@ export function registerMessagesRoute(
           startedAt: startTime,
         });
 
-        // 디버그 캡처
         const debugEnabled = deps.debug.isEnabled(body.model);
         let debugCapture: DebugCaptureInfo | undefined;
         let debugLogId: string | undefined;
@@ -345,16 +314,13 @@ export function registerMessagesRoute(
 
         try {
           if (body.stream) {
-            // 클라이언트 연결 끊김 감지용 AbortController
             const abortController = new AbortController();
             request.raw.on('close', () => abortController.abort());
 
             await deps.queue.enqueue(route.provider, async () => {
-              // 큐 대기 중 클라이언트가 이미 연결을 끊었으면 조기 종료
               if (abortController.signal.aborted) return;
 
-              // Anthropic SSE 스트리밍 응답
-              // reply.raw 직접 쓰기 시 Fastify CORS 미들웨어가 우회되므로 수동 추가
+              // Manually apply CORS headers since writing directly to reply.raw bypasses Fastify CORS middleware.
               const origin = request.headers.origin;
               reply.raw.writeHead(200, {
                 'Content-Type': 'text/event-stream',
@@ -366,7 +332,6 @@ export function registerMessagesRoute(
                 ...(unsupportedParams.length > 0 ? { 'X-Unsupported-Params': unsupportedParams.join(',') } : {}),
               });
 
-              // message_start 이벤트 (연결 끊김이면 조기 종료)
               if (!writeSSE(reply.raw, 'message_start', {
                 type: 'message_start',
                 message: {
@@ -381,21 +346,19 @@ export function registerMessagesRoute(
                 },
               })) return;
 
-              // content_block_start 이벤트
               if (!writeSSE(reply.raw, 'content_block_start', {
                 type: 'content_block_start',
                 index: 0,
                 content_block: { type: 'text', text: '' },
               })) return;
 
-              // ping 이벤트
               writeSSE(reply.raw, 'ping', { type: 'ping' });
 
               let totalContent = '';
               let ttfbMs: number | undefined;
               let streamUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
               let blockIndex = 0;
-              let currentBlockType: 'text' | 'thinking' | 'tool_use' | null = 'text'; // 초기 text 블록 시작됨
+              let currentBlockType: 'text' | 'thinking' | 'tool_use' | null = 'text';
 
               const streamIterator = provider.executeStream({
                 messages: internalMessages,
@@ -417,7 +380,6 @@ export function registerMessagesRoute(
                   }
 
                   if (event.type === 'text_delta') {
-                    // 현재 블록이 text가 아니면 새 text 블록 시작
                     if (currentBlockType !== 'text') {
                       if (currentBlockType !== null) {
                         writeSSE(reply.raw, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
@@ -457,7 +419,6 @@ export function registerMessagesRoute(
                   }
 
                   if (event.type === 'tool_use') {
-                    // 각 tool_use는 별도 블록
                     if (currentBlockType !== null) {
                       writeSSE(reply.raw, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
                       blockIndex++;
@@ -478,7 +439,6 @@ export function registerMessagesRoute(
                     streamUsage = event.usage;
                   }
 
-                  // 응답 크기 제한
                   if (totalContent.length > v.maxResponseLength) {
                     break;
                   }
@@ -486,10 +446,9 @@ export function registerMessagesRoute(
                   if (event.type === 'done') break;
                 }
               } catch (streamErr) {
-                // 헤더 전송 후 에러: 스트림 에러 이벤트 전송 후 종료
                 const errMsg = streamErr instanceof Error ? streamErr.message : 'Stream interrupted';
                 writeSSE(reply.raw, 'error', makeAnthropicError('api_error', errMsg));
-                reply.raw.end();  // end()는 이미 destroyed 체크를 내부적으로 처리
+                reply.raw.end();
 
                 logRequest({
                   requestId,
@@ -510,13 +469,11 @@ export function registerMessagesRoute(
                 return;
               }
 
-              // content_block_stop 이벤트
               writeSSE(reply.raw, 'content_block_stop', {
                 type: 'content_block_stop',
                 index: 0,
               });
 
-              // message_delta 이벤트 (연결 끊김이면 이후 쓰기 시도하지 않음)
               if (!writeSSE(reply.raw, 'message_delta', {
                 type: 'message_delta',
                 delta: { stop_reason: 'end_turn', stop_sequence: null },
@@ -524,7 +481,6 @@ export function registerMessagesRoute(
               })) {
                 reply.raw.end();
               } else {
-                // message_stop 이벤트
                 writeSSE(reply.raw, 'message_stop', { type: 'message_stop' });
                 reply.raw.end();
               }
@@ -561,12 +517,11 @@ export function registerMessagesRoute(
               }
 
               deps.activeRequests.finish(requestId);
-            }); // queue.enqueue 끝
+            });
 
             return;
           }
 
-          // Non-streaming 응답
           const result = await deps.queue.enqueue(
             route.provider,
             () => provider.execute({
@@ -582,13 +537,11 @@ export function registerMessagesRoute(
             }),
           );
 
-          // 응답 크기 제한
           let content = result.content;
           if (content.length > v.maxResponseLength) {
             content = content.substring(0, v.maxResponseLength);
           }
 
-          // Anthropic 형식 응답 생성
           const response = {
             id: messageId,
             type: 'message' as const,
@@ -611,12 +564,11 @@ export function registerMessagesRoute(
           if (unsupportedParams.length > 0) {
             reply.header('X-Unsupported-Params', unsupportedParams.join(','));
           }
-          // codex CLI 세션 재사용 시 thread_id 노출. 클라이언트는 다음 호출에 같은 X-Cliproxy-Session-Id만 보내면 자동 재사용됨 (참고용 노출).
+          // Expose thread_id for client reference when reusing Codex sessions via X-Cliproxy-Session-Id.
           if (result.meta?.threadId) {
             reply.header('X-Cliproxy-Thread-Id', result.meta.threadId);
           }
 
-          // 캐시에 응답 저장
           if (requestHash) {
             await deps.cache.set(
               requestHash,
@@ -700,13 +652,12 @@ export function registerMessagesRoute(
         }
       }
 
-      // 모든 provider가 프로바이더 단위 한도로 소진되었으면 502 대신 429 반환.
+      // Return 429 instead of 502 when all candidate providers were exhausted by provider rate limits.
       if (rateLimitRetryAfter !== null) {
         reply.header('Retry-After', String(rateLimitRetryAfter));
         return reply.status(429).send(makeAnthropicError('rate_limit_error', `Rate limit exceeded. Retry after ${rateLimitRetryAfter} seconds.`));
       }
 
-      // 모든 프로바이더 실패
       const isTimeout = lastError?.message.includes('timed out') ?? false;
       const statusCode = isTimeout ? 504 : 502;
       const errorType = isTimeout ? 'timeout_error' : 'api_error';

@@ -1,5 +1,3 @@
-// KeyedMutex 단위 테스트
-
 import { describe, it, expect } from 'vitest';
 import { KeyedMutex } from './keyed-mutex.js';
 
@@ -60,7 +58,6 @@ describe('KeyedMutex', () => {
       }),
     ).rejects.toThrow('boom');
 
-    // 락이 해제되었으면 다음 작업이 즉시 실행 가능
     const result = await mutex.runExclusive('k', async () => 'ok');
     expect(result).toBe('ok');
   });
@@ -70,7 +67,7 @@ describe('KeyedMutex', () => {
 
     const release = await mutex.acquire('k');
     release();
-    release(); // 중복 호출해도 부작용 없음
+    release();
 
     const result = await mutex.runExclusive('k', async () => 'ok');
     expect(result).toBe('ok');

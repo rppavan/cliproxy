@@ -21,14 +21,13 @@ interface CodexExecuteContext {
 
 interface CodexExecuteOptions extends ExecuteOptions {
   __codexPrompt?: CodexExecuteContext;
-  // codex는 스키마를 인라인 인수가 아니라 파일 경로로 받는다(--output-schema <path>).
-  // execute/executeStream이 임시 파일을 만들고 buildArgs가 그 경로를 사용한다.
+  // Codex accepts schemas via file path (--output-schema <path>) rather than inline arguments.
+  // execute/executeStream write a temporary file and buildArgs passes its path.
   __codexSchemaPath?: string;
 }
 
-// codex exec resume <id>에서 미지원되는 옵션 (검증된 --help 기준).
-// 값을 받는 옵션(-s/--sandbox, -C/--cd, --add-dir 등)은 그 다음 토큰도 함께 제거.
-// 검증: 'codex exec resume --help' 출력 — 2026-05-12.
+// Unsupported flags in 'codex exec resume <id>' based on 'codex exec resume --help'.
+// Options taking arguments (-s/--sandbox, -C/--cd, --add-dir, etc.) strip the succeeding token as well.
 const RESUME_UNSUPPORTED_FLAGS_WITH_VALUE = new Set([
   '-s', '--sandbox',
   '-C', '--cd',
@@ -42,8 +41,8 @@ const RESUME_UNSUPPORTED_FLAGS_STANDALONE = new Set([
   '--oss',
 ]);
 
-// codex --json 첫 라인에서 thread_id 추출. 잘못된 입력은 null 반환 (silently).
-// 보안: 추출 후 UUID 형식 검증으로 인젝션 방어 (SessionManager 키/CLI 인자에 사용되므로).
+// Extracts thread_id from the first line of codex --json output; returns null on invalid input.
+// Validates UUID format to defend against injection attacks into SessionManager keys and CLI arguments.
 const THREAD_ID_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 export function extractThreadIdFromLine(line: string): string | null {
   const trimmed = line.trim();
@@ -56,7 +55,7 @@ export function extractThreadIdFromLine(line: string): string | null {
       : (data.thread && typeof data.thread.id === 'string') ? data.thread.id
       : null;
     if (candidate && THREAD_ID_UUID_RE.test(candidate)) return candidate;
-  } catch { /* 첫 라인이 NDJSON이 아니면 무시 */ }
+  } catch { /* ignore non-NDJSON line */ }
   return null;
 }
 
@@ -65,11 +64,11 @@ export function filterResumeUnsupportedArgs(args: string[]): string[] {
   let skipNext = false;
   for (const arg of args) {
     if (skipNext) { skipNext = false; continue; }
-    // --flag=value 형태
+    // Handle --flag=value format
     const eqIdx = arg.indexOf('=');
     const flagPart = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
     if (RESUME_UNSUPPORTED_FLAGS_WITH_VALUE.has(flagPart)) {
-      // --flag value 분리 형태면 다음 토큰까지 스킵 (=가 없을 때만)
+      // Skip next token if --flag and value are separated by whitespace
       if (eqIdx < 0) skipNext = true;
       continue;
     }
@@ -82,19 +81,18 @@ export function filterResumeUnsupportedArgs(args: string[]): string[] {
 export class CodexProvider extends BaseProvider {
   readonly name = 'codex' as const;
 
-  // App Server 모드 전용: 프로세스 + 세션 매니저 (lazy 초기화)
+  // App Server mode: process and session manager (lazy initialization)
   private appServerProcess: CodexAppServerProcess | null = null;
   private appServerSessionManager: CodexAppServerSessionManager | null = null;
-  // CLI 모드(exec resume) 세션 매니저: effective config의 enable_session_reuse가 true인 첫 호출 시 lazy 초기화
+  // CLI mode (exec resume) session manager: lazily initialized on first call where enable_session_reuse is true
   private cliSessionManager: CodexCliSessionManager | null = null;
-  // ephemeral 자동 강제 경고를 매핑(alias)별로 1회만 출력하기 위한 dedupe set
+  // Deduplication set to log ephemeral auto-override warning once per model alias
   private warnedEphemeralForceAlias = new Set<string>();
 
   constructor(config: ProviderConfigYaml) {
     super(config);
     this.initParser();
 
-    // App Server 모드일 때 프로세스 + 세션 매니저 초기화
     if (this.isAppServerMode) {
       this.initAppServer();
     }
@@ -104,9 +102,9 @@ export class CodexProvider extends BaseProvider {
     return this.config.mode === 'app-server';
   }
 
-  // CLI 모드 기준 effective config 계산 (model_mappings.provider_overrides 반영).
-  // enable_session_reuse=true면 ephemeral이 true 또는 미지정(기본 true 폴백)일 때 모두 false로 강제 + 경고 1회.
-  // 이유: ephemeral=true면 codex가 jsonl을 디스크에 안 남겨 후속 exec resume이 'no rollout found'로 실패함.
+  // Computes effective config for CLI mode with provider overrides applied.
+  // If enable_session_reuse is true, forces ephemeral to false (and warns once) because
+  // ephemeral=true skips persisting jsonl to disk, causing subsequent exec resume to fail with 'no rollout found'.
   getEffectiveConfig(options: ExecuteOptions): ProviderConfigYaml {
     const merged = mergeProviderConfig(this.config, options.providerOverrides, 'codex');
     const cli = merged.cli_options;
@@ -122,8 +120,8 @@ export class CodexProvider extends BaseProvider {
     return merged;
   }
 
-  // CLI 모드 세션 매니저 lazy 획득 — effective cli_options.session_ttl_ms 반영.
-  // 매니저는 인스턴스 하나로 유지하되 TTL은 최초 초기화 시 결정. 후속 호출에서 TTL이 다른 매핑이 들어와도 매니저 TTL은 그대로.
+  // Lazily obtains CLI session manager using effective cli_options.session_ttl_ms.
+  // Maintains a single instance whose TTL is fixed upon initial creation.
   private ensureCliSessionManager(ttlMs?: number): CodexCliSessionManager {
     if (!this.cliSessionManager) {
       this.cliSessionManager = new CodexCliSessionManager(ttlMs);
@@ -131,12 +129,10 @@ export class CodexProvider extends BaseProvider {
     return this.cliSessionManager;
   }
 
-  // 외부에서 CLI 세션 매니저를 참조해야 할 때 (테스트/통합)
+  // Exposes CLI session manager for testing and external inspection
   getCliSessionManager(): CodexCliSessionManager | null {
     return this.cliSessionManager;
   }
-
-  // --- App Server 초기화/해제 ---
 
   private initAppServer(): void {
     const options = this.config.app_server_options ?? {};
@@ -160,13 +156,13 @@ export class CodexProvider extends BaseProvider {
   }
 
   private destroyAppServer(): void {
-    this.appServerProcess?.stop().catch(() => { /* 종료 실패 무시 */ });
+    this.appServerProcess?.stop().catch(() => { /* ignore stop error */ });
     this.appServerProcess = null;
     this.appServerSessionManager?.destroy();
     this.appServerSessionManager = null;
   }
 
-  // CLI 세션 매니저 정리 (테스트/종료 시 호출)
+  // Cleans up CLI session manager (called during teardown/tests)
   destroyCliSessionManager(): void {
     this.cliSessionManager?.destroy();
     this.cliSessionManager = null;
@@ -194,9 +190,7 @@ export class CodexProvider extends BaseProvider {
     return args;
   }
 
-  // --- CLI 모드 전용 메서드 (기존 동작 유지) ---
-
-  // stdin으로 프롬프트 전달 (Windows shell 모드에서 인자 따옴표 문제 방지)
+  // Feed prompt via stdin to avoid argument length limits and shell quoting issues
   protected override getStdinData(options: ExecuteOptions): string {
     const ctx = (options as CodexExecuteOptions).__codexPrompt;
     if (ctx) return ctx.text;
@@ -208,11 +202,11 @@ export class CodexProvider extends BaseProvider {
     const model = options.model || effective.default_model;
     const ctx = (options as CodexExecuteOptions).__codexPrompt;
 
-    // 스키마 요청은 resume을 타지 않는다 — codex exec resume은 --output-schema를 지원하지 않아
-    // 세션을 재사용하면 스키마 강제가 조용히 사라진다. 세션 연속성보다 스키마 준수를 우선한다.
+    // Requests with schema do not use resume because 'codex exec resume' does not support
+    // --output-schema, which would silently drop schema enforcement. Schema compliance takes precedence over session continuity.
     const schemaPath = (options as CodexExecuteOptions).__codexSchemaPath;
 
-    // resume 분기 판정: effective cli_options.enable_session_reuse + clientKey + 기존 thread 보유
+    // Determine resume branch: requires session reuse enabled, clientKey, and existing thread
     let resumeThreadId: string | null = null;
     if (!schemaPath && effective.cli_options?.enable_session_reuse === true && options.clientKey && !ctx?.imageFiles?.length) {
       const sm = this.ensureCliSessionManager(effective.cli_options.session_ttl_ms);
@@ -221,14 +215,14 @@ export class CodexProvider extends BaseProvider {
         resumeThreadId = existing.threadId;
       }
     }
-    // 이미지 첨부가 있으면 첫 호출과 동일한 새 exec로 (resume은 -i를 지원하지만 안전을 위해 첫 호출만 처리)
+    // Requests with images start a fresh exec session for safety
 
-    // --ephemeral: effective 기준 (false면 jsonl 디스크 저장 — resume 가능)
+    // Inject --ephemeral based on effective configuration (false persists jsonl for resume)
     const ephemeralEnabled = effective.cli_options?.ephemeral !== false;
     const userHasEphemeral = effective.extra_args.includes('--ephemeral');
     const injectEphemeral = ephemeralEnabled && !userHasEphemeral;
 
-    // 추론 수준 주입
+    // Inject reasoning effort
     const userHasReasoning = effective.extra_args.some(
       (arg) => arg === 'model_reasoning_effort' || arg.startsWith('model_reasoning_effort='),
     );
@@ -241,8 +235,8 @@ export class CodexProvider extends BaseProvider {
     }
 
     if (resumeThreadId) {
-      // codex exec resume <thread_id> 모드: 일부 옵션(-s/--sandbox, -C/--cd, --add-dir, -p/--profile,
-      // --oss, --local-provider, --output-schema, --color)이 미지원. extra_args에서 이들과 그 다음 값 인자를 필터링.
+      // In 'codex exec resume <thread_id>' mode, filter out unsupported options
+      // (-s/--sandbox, -C/--cd, --add-dir, -p/--profile, --oss, --local-provider, --output-schema, --color).
       const filteredExtra = filterResumeUnsupportedArgs(effective.extra_args);
       return [
         'exec',
@@ -257,7 +251,7 @@ export class CodexProvider extends BaseProvider {
       ];
     }
 
-    // 사용자가 extra_args로 스키마를 고정했다면 그 값을 존중한다(다른 provider와 동일 정책).
+    // Respect user-pinned --output-schema in extra_args
     const userHasSchema = effective.extra_args.some(
       (arg) => arg === '--output-schema' || arg.startsWith('--output-schema='),
     );
@@ -265,32 +259,31 @@ export class CodexProvider extends BaseProvider {
 
     const args: string[] = [
       'exec',
-      // --json 필수: 없으면 TUI 출력이 되어 stdout 캡처 불가
+      // --json is required; otherwise Codex outputs TUI formatting
       '--json',
       ...(injectEphemeral ? ['--ephemeral'] : []),
       ...reasoningArgs,
       ...effective.extra_args,
       ...schemaArgs,
       ...((ctx?.imageFiles ?? []).flatMap((file) => ['--image', file])),
-      // 모델 지정 (빈 값이면 Codex 기본 모델 사용)
+      // Model specification (empty string uses Codex default model)
       ...(model ? ['-m', model] : []),
-      '-', // stdin에서 프롬프트 읽기
+      '-', // Read prompt from stdin
     ];
 
     return args;
   }
 
-  // Codex --json 출력: NDJSON 이벤트 스트림에서 텍스트 추출
+  // Extract text from Codex --json NDJSON event stream
   protected override parseNonStreamOutput(stdout: string): ExecuteResult {
     const trimmed = stdout.trim();
     if (!trimmed) {
       return { content: '', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, finishReason: 'error' };
     }
 
-    // 단일 JSON 객체인 경우 (구형 포맷)
+    // Legacy single JSON object format
     try {
       const data = JSON.parse(trimmed);
-      // 배열이나 NDJSON이 아닌 단일 객체
       if (typeof data === 'object' && !Array.isArray(data) && data.type === undefined) {
         const content = data.result ?? data.content ?? data.message ?? '';
         return {
@@ -303,12 +296,12 @@ export class CodexProvider extends BaseProvider {
           finishReason: 'stop',
         };
       }
-    } catch { /* NDJSON → 라인별 파싱으로 폴백 */ }
+    } catch { /* fall back to line-by-line NDJSON parsing */ }
 
-    // NDJSON 라인별 파싱 (item.completed → text 추출)
+    // Parse NDJSON line by line (extract text from item.completed)
     const result = super.parseNonStreamOutput(stdout);
 
-    // 첫 라인에서 thread_id 추출하여 meta에 실음. CodexProvider.execute에서 result.meta.threadId를 SessionManager.set에 사용.
+    // Extract thread_id from the first line and attach to meta for SessionManager.set
     const firstLine = stdout.split('\n').find((l) => l.trim().length > 0);
     if (firstLine) {
       const threadId = extractThreadIdFromLine(firstLine);
@@ -319,8 +312,6 @@ export class CodexProvider extends BaseProvider {
     return result;
   }
 
-  // --- mode 기반 분기 ---
-
   override async execute(options: ExecuteOptions): Promise<ExecuteResult> {
     if (this.isAppServerMode) {
       if (!this.appServerProcess?.isAlive()) {
@@ -329,7 +320,7 @@ export class CodexProvider extends BaseProvider {
       const config = this.buildAppServerConfig(options);
       const result = await executeAppServer(options, config);
       const model = options.model || this.config.default_model;
-      // App Server 모드에서도 onDebug 콜백 호출 (디버그 로그 PENDING 방지)
+      // Invoke onDebug in App Server mode to prevent debug log from remaining PENDING
       options.onDebug?.({
         cliArgs: this.appServerDebugArgs(model, result.appServerMeta),
         stdout: result.content,
@@ -344,7 +335,7 @@ export class CodexProvider extends BaseProvider {
       ...(schema ? { __codexSchemaPath: schema.path } : {}),
     };
 
-    // CLI 모드: effective enable_session_reuse 기준으로 SessionManager 갱신 여부 결정
+    // In CLI mode, determine SessionManager updates based on effective enable_session_reuse
     const effective = this.getEffectiveConfig(options);
     const sessionReuseEnabled = effective.cli_options?.enable_session_reuse === true && !!options.clientKey;
     const model = options.model || effective.default_model;
@@ -354,7 +345,7 @@ export class CodexProvider extends BaseProvider {
 
     try {
       const result = await super.execute(ext);
-      // thread_id 캡처 후 SessionManager 저장
+      // Persist captured thread_id in SessionManager
       if (sessionReuseEnabled && result.meta?.threadId) {
         const sm = this.ensureCliSessionManager(effective.cli_options?.session_ttl_ms);
         sm.set(options.clientKey!, result.meta.threadId, model);
@@ -362,7 +353,7 @@ export class CodexProvider extends BaseProvider {
       }
       return result;
     } catch (err) {
-      // 에러 시 세션 무효화 (다음 호출은 새 thread)
+      // Invalidate session on error so subsequent requests start a fresh thread
       if (sessionReuseEnabled && this.cliSessionManager) {
         this.cliSessionManager.invalidate(options.clientKey!);
       }
@@ -373,7 +364,7 @@ export class CodexProvider extends BaseProvider {
     }
   }
 
-  // codex는 --output-schema로 파일 경로만 받으므로 요청마다 임시 파일에 스키마를 쓴다.
+  // Write schema to a temporary file per request since Codex only accepts --output-schema as a file path
   private async prepareSchemaFile(
     options: ExecuteOptions,
   ): Promise<{ path: string; cleanup: () => Promise<void> } | undefined> {
@@ -391,14 +382,14 @@ export class CodexProvider extends BaseProvider {
     return { path, cleanup: () => rm(dir, { recursive: true, force: true }) };
   }
 
-  // codex는 --output-schema로 스키마만 강제할 수 있고, app-server 모드는 별도 실행기를 탄다.
+  // Codex supports schemas via --output-schema in CLI mode; app-server mode uses a distinct executor
   override supportsResponseFormat(format: ChatResponseFormat): boolean {
     if (format.type !== 'json_schema') return false;
     return !this.isAppServerMode;
   }
 
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
-    // 스키마 요청은 완성된 구조화 값 1회 emit으로 통일한다 (structured-output.ts 주석 참고).
+    // Emit schema requests as a single completed structured output
     if (!this.isAppServerMode && shouldBufferStream(options.chatResponseFormat)) {
       const result = await this.execute({ ...options, stream: false });
       yield { type: 'text_delta', text: result.content };
@@ -423,7 +414,7 @@ export class CodexProvider extends BaseProvider {
         yield event;
       }
       const model = options.model || this.config.default_model;
-      // App Server 모드에서도 onDebug 콜백 호출 (디버그 로그 PENDING 방지)
+      // Invoke onDebug in App Server mode to prevent debug log from remaining PENDING
       options.onDebug?.({
         cliArgs: this.appServerDebugArgs(model, streamMeta),
         streamLines,
@@ -438,8 +429,8 @@ export class CodexProvider extends BaseProvider {
       ...(schema ? { __codexSchemaPath: schema.path } : {}),
     };
 
-    // CLI 모드: thread_started 이벤트 가로채서 SessionManager 갱신.
-    // thread_started는 외부 SSE 변환기에서 default 분기로 무시되도록 ProviderEvent union에 등록됨.
+    // In CLI mode, intercept thread_started event to update SessionManager.
+    // thread_started is registered in ProviderEvent union and ignored by external SSE transformers.
     const effective = this.getEffectiveConfig(options);
     const sessionReuseEnabled = effective.cli_options?.enable_session_reuse === true && !!options.clientKey;
     const model = options.model || effective.default_model;
@@ -451,7 +442,7 @@ export class CodexProvider extends BaseProvider {
             const sm = this.ensureCliSessionManager(effective.cli_options?.session_ttl_ms);
             sm.set(options.clientKey!, event.threadId, model);
           }
-          // 내부 이벤트는 외부로 노출하지 않음 (HTTP 라우트가 별도 처리하지 않도록)
+          // Do not forward internal event to client SSE stream
           continue;
         }
         yield event;
@@ -473,17 +464,17 @@ export class CodexProvider extends BaseProvider {
     return super.checkHealth();
   }
 
-  // 런타임 설정 변경 시 App Server 프로세스 재초기화
+  // Reinitialize App Server process on runtime config change
   override updateConfig(partial: Partial<ProviderConfigYaml>): void {
     const wasAppServer = this.isAppServerMode;
     super.updateConfig(partial);
 
-    // CLI → App Server 전환: 프로세스 시작
+    // CLI -> App Server: start process
     if (!wasAppServer && this.isAppServerMode) {
       this.initAppServer();
     }
 
-    // App Server → CLI 전환: 프로세스 종료
+    // App Server -> CLI: stop process
     if (wasAppServer && !this.isAppServerMode) {
       this.destroyAppServer();
     }

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ExecuteOptions, ClaudeSdkOptions } from '@star-cliproxy/shared';
 import { ClaudeSdkSessionManager } from './claude-sdk-session-manager.js';
 
-// SDK mock - query()가 반환할 메시지 시퀀스를 제어
+// SDK mock - controls sequence of messages returned by query()
 const mockMessages: Record<string, unknown>[] = [];
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -13,7 +13,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-// mock 설정 후 import (vi.mock은 호이스팅됨)
+// Import after mock setup (vi.mock is hoisted)
 const { executeSdk, executeStreamSdk } = await import('./claude-sdk-executor.js');
 
 function createOptions(overrides?: Partial<ExecuteOptions>): ExecuteOptions {
@@ -271,7 +271,7 @@ describe('ClaudeSdkSessionManager', () => {
   let manager: ClaudeSdkSessionManager;
 
   beforeEach(() => {
-    manager = new ClaudeSdkSessionManager(5000); // 5초 TTL
+    manager = new ClaudeSdkSessionManager(5000); // 5s TTL
   });
 
   afterEach(() => {
@@ -299,11 +299,11 @@ describe('ClaudeSdkSessionManager', () => {
   });
 
   it('TTL 만료 시 null 반환', async () => {
-    manager.destroy(); // 기존 매니저 해제
+    manager.destroy(); // Clean up existing manager
     manager = new ClaudeSdkSessionManager(50); // 50ms TTL
     manager.set('client-1', 'sess-a', 'claude-sonnet-4-6');
 
-    // TTL 대기
+    // Wait for TTL expiration
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const session = manager.get('client-1', 'claude-sonnet-4-6');

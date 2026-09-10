@@ -4,7 +4,6 @@ import { getDatabase } from '../../db/client.js';
 import { requestLogs } from '../../db/schema.js';
 
 export function registerStatsRoutes(app: FastifyInstance): void {
-  // 전체 통계
   app.get('/admin/stats', async (_request, reply) => {
     const db = getDatabase();
 
@@ -26,7 +25,6 @@ export function registerStatsRoutes(app: FastifyInstance): void {
       totalCompletionTokens: 0,
     };
 
-    // Provider별 통계
     const providerStats = await db.select({
       provider: requestLogs.provider,
       count: sql<number>`count(*)`,
@@ -35,7 +33,6 @@ export function registerStatsRoutes(app: FastifyInstance): void {
     }).from(requestLogs)
       .groupBy(requestLogs.provider);
 
-    // 모델별 통계
     const modelStats = await db.select({
       modelAlias: requestLogs.modelAlias,
       provider: requestLogs.provider,
@@ -57,14 +54,12 @@ export function registerStatsRoutes(app: FastifyInstance): void {
     });
   });
 
-  // 시간대별 요청 추이 (기간 및 모델별 breakdown 지원)
   app.get<{ Querystring: { hours?: string } }>(
     '/admin/trend',
     async (request, reply) => {
       const db = getDatabase();
-      const hours = Math.min(parseInt(request.query.hours ?? '24', 10), 168); // 최대 7일
+      const hours = Math.min(parseInt(request.query.hours ?? '24', 10), 168);
 
-      // 날짜+시간 키로 그룹핑 (YYYY-MM-DD HH 형식)
       const trend = await db.select({
         slot: sql<string>`strftime('%Y-%m-%d %H', created_at)`,
         count: sql<number>`count(*)`,
@@ -76,7 +71,6 @@ export function registerStatsRoutes(app: FastifyInstance): void {
         .groupBy(sql`strftime('%Y-%m-%d %H', created_at)`)
         .orderBy(sql`strftime('%Y-%m-%d %H', created_at) ASC`);
 
-      // 모델별 breakdown
       const byModel = await db.select({
         slot: sql<string>`strftime('%Y-%m-%d %H', created_at)`,
         modelAlias: requestLogs.modelAlias,
@@ -90,7 +84,6 @@ export function registerStatsRoutes(app: FastifyInstance): void {
     },
   );
 
-  // 최근 요청 로그
   app.get<{ Querystring: { limit?: string; offset?: string; provider?: string; status?: string } }>(
     '/admin/logs',
     async (request, reply) => {
@@ -98,7 +91,6 @@ export function registerStatsRoutes(app: FastifyInstance): void {
       const limit = Math.min(parseInt(request.query.limit ?? '50', 10), 200);
       const offset = parseInt(request.query.offset ?? '0', 10);
 
-      // 전체 카운트와 데이터를 병렬로 조회
       const [countResult, logs] = await Promise.all([
         db.select({
           total: sql<number>`count(*)`,
@@ -132,7 +124,6 @@ export function registerStatsRoutes(app: FastifyInstance): void {
     },
   );
 
-  // 기간별 로그 삭제 (지정 일수 이전 로그 삭제)
   app.delete<{ Querystring: { days?: string } }>(
     '/admin/logs',
     async (request, reply) => {

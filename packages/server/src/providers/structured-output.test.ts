@@ -49,9 +49,9 @@ function options(extra: Partial<ExecuteOptions> = {}): ExecuteOptions {
   };
 }
 
-// spawn이 호출된 시점에 child를 만든다. mockReturnValue(fakeChild(...))처럼 미리 만들면
-// close를 알리는 setImmediate가 spawn 이전에 발화해, provider가 임시 파일 I/O 등으로
-// 한 tick이라도 늦게 spawn할 때 close를 영영 못 받는다(codex 스키마 파일 경로).
+// Creates child at the time spawn is invoked. Pre-creating via mockReturnValue(fakeChild(...))
+// causes the setImmediate close event to fire before spawn returns, missing the close event
+// if the provider awaits async temp file I/O (e.g. codex schema file path).
 function mockSpawn(stdout: string, stderr = '', exitCode = 0) {
   spawnMock.mockImplementation(() => fakeChild(stdout, stderr, exitCode));
 }
@@ -74,7 +74,7 @@ beforeEach(() => {
 type BuildArgs = { buildArgs(opts: ExecuteOptions): string[] };
 
 describe('ClaudeProvider - structured output', () => {
-  it('중첩 schema만 --json-schema로 전달 (CLI 모드)', () => {
+  it('passes only nested schema via --json-schema (CLI mode)', () => {
     const provider = new ClaudeProvider(config('claude'));
     const args = (provider as unknown as BuildArgs).buildArgs(options({ chatResponseFormat: jsonSchemaFormat }));
     const idx = args.indexOf('--json-schema');
@@ -82,7 +82,7 @@ describe('ClaudeProvider - structured output', () => {
     expect(JSON.parse(args[idx + 1])).toEqual(jsonSchemaFormat.json_schema.schema);
   });
 
-  it('json_object/text는 --json-schema를 추가하지 않음', () => {
+  it('does not add --json-schema for json_object/text', () => {
     const provider = new ClaudeProvider(config('claude'));
     for (const format of [{ type: 'json_object' as const }, { type: 'text' as const }]) {
       const args = (provider as unknown as BuildArgs).buildArgs(options({ chatResponseFormat: format }));
@@ -90,14 +90,14 @@ describe('ClaudeProvider - structured output', () => {
     }
   });
 
-  it('extra_args에 --json-schema가 있으면 사용자 값 존중', () => {
+  it('respects custom --json-schema in extra_args', () => {
     const provider = new ClaudeProvider(config('claude', { extra_args: ['--json-schema', '/etc/custom.json'] }));
     const args = (provider as unknown as BuildArgs).buildArgs(options({ chatResponseFormat: jsonSchemaFormat }));
     expect(args.filter((arg) => arg === '--json-schema')).toHaveLength(1);
     expect(args).toContain('/etc/custom.json');
   });
 
-  it('structured_output이 있으면 content로 사용', async () => {
+  it('uses structured_output as content when present', async () => {
     spawnMock.mockReturnValue(fakeChild(JSON.stringify({
       result: '{"answer":"blue"}',
       structured_output: { answer: 'blue' },
@@ -118,7 +118,7 @@ describe('ClaudeProvider - structured output', () => {
       .rejects.toThrow(/structured_output/);
   });
 
-  it('response_format이 없으면 기존 result 경로 유지', async () => {
+  it('retains original result path when response_format is absent', async () => {
     spawnMock.mockReturnValue(fakeChild(JSON.stringify({
       result: 'plain answer',
       structured_output: { answer: 'ignored' },
@@ -129,9 +129,9 @@ describe('ClaudeProvider - structured output', () => {
     expect(result.content).toBe('plain answer');
   });
 
-  it('스트리밍은 delta를 억제하고 구조화 값 1회만 emit', async () => {
-    // 실측(claude 2.1.228): 스키마를 줘도 delta는 프로즈("blue")를 흘리고
-    // 내부 StructuredOutput tool round-trip 뒤 최종 result에만 스키마 준수 값이 담긴다.
+  it('suppresses deltas and emits structured value once in streaming mode', async () => {
+    // Observed behavior (claude 2.1.228): deltas emit raw prose ("blue") even with a schema;
+    // schema-compliant values only appear in the final result after the internal StructuredOutput tool round-trip.
     spawnMock.mockReturnValue(fakeChild(JSON.stringify({
       result: '{"answer":"blue"}',
       structured_output: { answer: 'blue' },
@@ -146,7 +146,7 @@ describe('ClaudeProvider - structured output', () => {
     expect((events[0] as { type: 'text_delta'; text: string }).text).toBe('{"answer":"blue"}');
   });
 
-  it('CLI 모드에서만 json_schema 지원 선언 (sdk/channel-worker는 미지원)', () => {
+  it('declares json_schema support only in CLI mode (not sdk/channel-worker)', () => {
     expect(new ClaudeProvider(config('claude')).supportsResponseFormat(jsonSchemaFormat)).toBe(true);
     expect(new ClaudeProvider(config('claude')).supportsResponseFormat({ type: 'json_object' })).toBe(false);
     expect(new ClaudeProvider(config('claude', { mode: 'sdk' })).supportsResponseFormat(jsonSchemaFormat)).toBe(false);
@@ -157,7 +157,7 @@ describe('ClaudeProvider - structured output', () => {
 describe('CodexProvider - structured output', () => {
   const codexOptions = (extra: Partial<ExecuteOptions> = {}) => options({ model: 'gpt-5.5', ...extra });
 
-  it('스키마를 파일로 쓰고 --output-schema로 경로 전달', async () => {
+  it('writes schema to file and passes path via --output-schema', async () => {
     mockSpawn(JSON.stringify({
       type: 'item.completed',
       item: { type: 'agent_message', text: '{"answer":"blue"}' },
@@ -168,11 +168,11 @@ describe('CodexProvider - structured output', () => {
     const args = spawnMock.mock.calls[0][1] as string[];
     const idx = args.indexOf('--output-schema');
     expect(idx).toBeGreaterThanOrEqual(0);
-    // codex는 인라인 JSON이 아니라 파일 경로를 받는다.
+    // Codex accepts a file path rather than inline JSON
     expect(args[idx + 1]).toMatch(/\.json$/);
   });
 
-  it('json_object/text는 --output-schema를 추가하지 않음', async () => {
+  it('does not add --output-schema for json_object/text', async () => {
     mockSpawn(JSON.stringify({
       type: 'item.completed',
       item: { type: 'agent_message', text: 'ok' },
@@ -182,7 +182,7 @@ describe('CodexProvider - structured output', () => {
     expect(spawnMock.mock.calls[0][1] as string[]).not.toContain('--output-schema');
   });
 
-  it('스키마 요청 시 resume 분기를 타지 않음 (codex resume은 --output-schema 미지원)', async () => {
+  it('bypasses resume branch on schema requests (codex resume lacks --output-schema)', async () => {
     mockSpawn(JSON.stringify({
       type: 'item.completed',
       item: { type: 'agent_message', text: '{"answer":"blue"}' },
@@ -190,7 +190,7 @@ describe('CodexProvider - structured output', () => {
     const provider = new CodexProvider(config('codex', {
       cli_options: { enable_session_reuse: true },
     }));
-    // 세션이 있더라도 스키마 요청이면 새 exec여야 한다.
+    // Schema requests must trigger a new exec even when a reusable session exists
     await provider.execute(codexOptions({ clientKey: 'client-1', chatResponseFormat: jsonSchemaFormat }));
     await provider.execute(codexOptions({ clientKey: 'client-1', chatResponseFormat: jsonSchemaFormat }));
 
@@ -199,7 +199,7 @@ describe('CodexProvider - structured output', () => {
     expect(secondArgs).toContain('--output-schema');
   });
 
-  it('json_schema만 강제 가능하다고 선언 (app-server 모드는 미지원)', () => {
+  it('declares only json_schema supported (app-server mode unsupported)', () => {
     expect(new CodexProvider(config('codex')).supportsResponseFormat(jsonSchemaFormat)).toBe(true);
     expect(new CodexProvider(config('codex')).supportsResponseFormat({ type: 'json_object' })).toBe(false);
     expect(new CodexProvider(config('codex', { mode: 'app-server' })).supportsResponseFormat(jsonSchemaFormat)).toBe(false);

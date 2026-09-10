@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChannelBridge, type BridgeServerOptions } from './bridge-server.js';
 
-// provider.execute가 실제 claude를 spawn하므로, 여기서는 실행 경로를 타지 않는
-// HTTP 동작(health / 인증 / 입력 검증 / 라우팅)만 검증한다.
+// Since provider.execute spawns a live CLI process, this test suite verifies HTTP behavior (health, auth, input validation, and routing).
 
 let bridge: ChannelBridge | null = null;
 let portCounter = 18990;

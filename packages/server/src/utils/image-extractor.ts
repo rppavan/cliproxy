@@ -1,7 +1,5 @@
-// Gemini CLI(@<path> 문법) 등 파일 첨부 기반 CLI를 위한 이미지 추출/임시 저장 유틸.
-// - data URL(base64) → 디코드 후 임시 파일
-// - http/https URL → SSRF 차단 후 다운로드
-// - Anthropic { type:'image', source:{...} } 형식도 수용
+// Image extraction and temp file storage for attachment-based CLIs (e.g. Gemini CLI @<path> syntax).
+// Decodes base64 data URLs, downloads validated remote URLs (with SSRF protection), and normalizes Anthropic formats.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -156,24 +154,21 @@ async function imageRefToTempFile(ref: ImageRef): Promise<string> {
 }
 
 export interface PreparedPrompt {
-  prompt: string;       // 이미지 자리에 @<absolute-path>가 들어간 직렬화된 텍스트
-  tempFiles: string[];  // 호출자가 finally에서 정리해야 함
-  hasImages: boolean;
-  failures: string[];   // 처리 실패한 이미지의 사유 (요청은 계속됨)
-}
-
-export interface PreparedCodexPrompt {
-  prompt: string;       // 이미지 블록을 짧은 텍스트 마커로 치환한 프롬프트
-  imageFiles: string[]; // codex exec --image 인자로 넘길 임시 파일
-  tempFiles: string[];  // 호출자가 finally에서 정리해야 함
+  prompt: string;
+  tempFiles: string[];  // Caller must clean up in finally block.
   hasImages: boolean;
   failures: string[];
 }
 
-// Gemini CLI용 프롬프트 생성:
-// - 이미지 블록을 임시 파일로 저장하고, 메시지 안에서 같은 위치에 "@<path>" 텍스트 토큰으로 대체
-// - 텍스트 블록은 그대로 보존
-// - 단일 user 메시지인 경우 convertMessagesToSinglePrompt가 태그 없이 원본 텍스트 반환
+export interface PreparedCodexPrompt {
+  prompt: string;
+  imageFiles: string[]; // Temp image files passed as --image arguments.
+  tempFiles: string[];  // Caller must clean up in finally block.
+  hasImages: boolean;
+  failures: string[];
+}
+
+// Saves image blocks to temp files and replaces them with "@<path>" tokens for Gemini CLI.
 export async function prepareGeminiPrompt(messages: ChatMessage[]): Promise<PreparedPrompt> {
   const tempFiles: string[] = [];
   const failures: string[] = [];
@@ -219,9 +214,7 @@ export async function prepareGeminiPrompt(messages: ChatMessage[]): Promise<Prep
   return { prompt, tempFiles, hasImages: tempFiles.length > 0, failures };
 }
 
-// Codex CLI용 프롬프트 생성:
-// - 이미지 블록을 임시 파일로 저장하고, 파일 경로는 codex exec --image 인자로 전달
-// - 프롬프트 안에는 이미지 위치를 알 수 있는 짧은 텍스트 마커만 남긴다
+// Saves image blocks to temp files for codex exec --image flags and retains text markers.
 export async function prepareCodexPrompt(messages: ChatMessage[]): Promise<PreparedCodexPrompt> {
   const tempFiles: string[] = [];
   const failures: string[] = [];

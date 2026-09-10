@@ -1,5 +1,4 @@
-// PoC MCP 서버 (stdio): interactive claude 세션이 호출하는 report_result tool 제공.
-// 호출되면 결과를 POC_RESULT_FILE에 기록한다 → 드라이버가 그 파일로 완료를 감지.
+// Provides the report_result tool for interactive Claude sessions to signal completion via POC_RESULT_FILE.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';

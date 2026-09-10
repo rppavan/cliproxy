@@ -19,7 +19,7 @@ import type {
 import { streamChunkToEvents } from '@star-cliproxy/shared';
 import { getParserForProvider } from '../utils/stream-transformer.js';
 
-// 활성 자식 프로세스 추적 — 서버 종료 시 전체 정리용
+// Active child processes tracked for server shutdown cleanup
 const activeProcesses = new Set<ChildProcess>();
 
 export function trackProcess(child: ChildProcess): void {
@@ -28,7 +28,7 @@ export function trackProcess(child: ChildProcess): void {
   child.on('error', () => activeProcesses.delete(child));
 }
 
-/** 서버 종료 시 호출 — 모든 활성 자식 프로세스를 gracefulKill */
+/** Gracefully kills all tracked child processes upon server shutdown. */
 export function killAllChildProcesses(): void {
   for (const child of activeProcesses) {
     gracefulKill(child);
@@ -36,7 +36,6 @@ export function killAllChildProcesses(): void {
   activeProcesses.clear();
 }
 
-/** 현재 추적 중인 활성 프로세스 수 (디버그/모니터링용) */
 export function getActiveProcessCount(): number {
   return activeProcesses.size;
 }
@@ -50,7 +49,6 @@ export interface ProviderModelInfo {
 export abstract class BaseProvider {
   abstract readonly name: string;
 
-  // 빌트인 프로바이더는 기본 chat, 서브클래스에서 오버라이드 가능
   readonly endpointTypes: readonly EndpointType[] = ['chat'];
 
   protected config: ProviderConfigYaml;
@@ -58,11 +56,10 @@ export abstract class BaseProvider {
 
   constructor(config: ProviderConfigYaml) {
     this.config = config;
-    // parser는 서브클래스에서 name 초기화 후 설정
+    // Initialized via initParser() in subclasses once name is set
     this.parser = null!;
   }
 
-  // 런타임 설정 변경 (대시보드에서 사용)
   updateConfig(partial: Partial<ProviderConfigYaml>): void {
     Object.assign(this.config, partial);
   }
@@ -71,7 +68,6 @@ export abstract class BaseProvider {
     return { ...this.config };
   }
 
-  // 프로바이더가 제공하는 실제 모델 목록 (서브클래스에서 CLI/API 조회 오버라이드)
   async listModels(): Promise<ProviderModelInfo[]> {
     if (this.config.default_model) {
       return [{ id: this.config.default_model, name: this.config.default_model }];
@@ -80,9 +76,9 @@ export abstract class BaseProvider {
   }
 
   /**
-   * 이 프로바이더가 주어진 response_format(structured output)을 백엔드에 실제로
-   * 강제하거나 전달할 수 있는지. 기본값 false — 요청은 그대로 처리하되 라우트가
-   * X-Unsupported-Params 헤더로 클라이언트에 알린다.
+   * Indicates whether this provider can enforce or forward the given response_format
+   * to the backend. Defaults to false; unsupported requests proceed while routes
+   * notify clients via X-Unsupported-Params header.
    */
   supportsResponseFormat(_format: ChatResponseFormat): boolean {
     return false;
@@ -92,22 +88,18 @@ export abstract class BaseProvider {
     this.parser = getParserForProvider(this.name);
   }
 
-  // CLI 인수 구성 (서브클래스에서 구현)
   protected abstract buildArgs(options: ExecuteOptions): string[];
 
-  // stdin으로 전달할 프롬프트 데이터 (서브클래스에서 오버라이드)
-  // ARG_MAX 제한(macOS 1MB, Linux 2MB) 우회를 위해 대용량 프롬프트는 stdin으로 전달
-  // undefined 반환 시 stdin 즉시 닫기 (기존 동작)
+  // Large prompts are passed via stdin to bypass OS ARG_MAX limits (1MB macOS, 2MB Linux).
+  // Returns undefined to close stdin immediately when unused.
   protected getStdinData(_options: ExecuteOptions): string | undefined {
     return undefined;
   }
 
-  // cli_path + args를 합쳐 디버그용 전체 명령 배열 생성
   private fullCommand(args: string[]): string[] {
     return [this.config.cli_path, ...args];
   }
 
-  // non-streaming 실행
   async execute(options: ExecuteOptions): Promise<ExecuteResult> {
     const args = this.buildArgs({ ...options, stream: false });
     const stdinData = this.getStdinData({ ...options, stream: false });
@@ -122,12 +114,10 @@ export abstract class BaseProvider {
     return this.parseNonStreamOutput(stdout, options);
   }
 
-  // streaming 실행
   async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
     const args = this.buildArgs({ ...options, stream: true });
     const stdinData = this.getStdinData({ ...options, stream: true });
     const child = this.spawnProcess(args);
-    // stdin에 프롬프트 데이터 전달 후 닫기
     if (stdinData) {
       child.stdin?.write(stdinData);
     }
@@ -152,7 +142,7 @@ export abstract class BaseProvider {
       for await (const line of rl) {
         if (captureDebug) debugLines.push(line);
 
-        // parseEvents 우선 사용, 없으면 레거시 parse → 어댑터 변환
+        // Prefer parseEvents; adapt legacy parse if unavailable
         if (this.parser.parseEvents) {
           const events = this.parser.parseEvents(line);
           for (const event of events) {
@@ -179,17 +169,14 @@ export abstract class BaseProvider {
     }
   }
 
-  // 임베딩 실행 (HTTP 프로바이더 등에서 오버라이드)
   async executeEmbedding(_options: EmbeddingOptions): Promise<EmbeddingResult> {
     throw new Error(`${this.name} does not support embeddings`);
   }
 
-  // TTS 실행 (HTTP 프로바이더 등에서 오버라이드)
   async executeTts(_options: TtsOptions): Promise<TtsResult> {
     throw new Error(`${this.name} does not support text-to-speech`);
   }
 
-  // 건강 체크 (--version 실행)
   async checkHealth(): Promise<HealthStatus> {
     try {
       const { exitCode } = await this.runProcess(['--version'], undefined, 10_000);
@@ -199,8 +186,7 @@ export abstract class BaseProvider {
     }
   }
 
-  // 부모 프로세스(Claude Code)의 환경변수를 정리하여 중첩 감지 방지
-  // 서브클래스에서도 재사용할 수 있도록 protected로 공개
+  // Strip parent process environment variables to prevent nested session detection
   protected getCleanEnv(): Record<string, string | undefined> {
     const env = { ...process.env };
     delete env.CLAUDECODE;
@@ -217,7 +203,7 @@ export abstract class BaseProvider {
   }
 
   protected spawnProcess(args: string[]): ChildProcess {
-    // Windows에서 npm global CLI(.cmd)는 shell 경유 필수
+    // Windows npm global CLI wrappers (.cmd/.bat) require shell: true
     const isWin = process.platform === 'win32';
     const child = spawn(this.config.cli_path, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -237,7 +223,6 @@ export abstract class BaseProvider {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolve, reject) => {
       const child = this.spawnProcess(args);
-      // stdin에 프롬프트 데이터 전달 후 닫기
       if (stdinData) {
         child.stdin?.write(stdinData);
       }
@@ -277,10 +262,8 @@ export abstract class BaseProvider {
     });
   }
 
-  // non-streaming 출력에서 텍스트 추출 (서브클래스에서 오버라이드 가능)
-  // options는 structured output처럼 요청 컨텍스트가 필요한 파싱을 위해 전달된다 (선택적).
+  // Extracts text from non-streaming CLI output; options provides context for structured output
   protected parseNonStreamOutput(stdout: string, _options?: ExecuteOptions): ExecuteResult {
-    // 기본: NDJSON 라인들에서 텍스트 추출
     const lines = stdout.trim().split('\n');
     const contentParts: string[] = [];
     let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -307,7 +290,6 @@ export abstract class BaseProvider {
 
     const content = contentParts.join('');
 
-    // 토큰 정보 없으면 추정
     if (usage.totalTokens === 0) {
       usage = estimateTokens(content);
     }
@@ -320,8 +302,7 @@ export abstract class BaseProvider {
   }
 }
 
-// SIGTERM 후 일정 시간이 지나도 종료되지 않으면 SIGKILL로 강제 종료
-// zombie 프로세스 누적 방지용 헬퍼
+// Escalates SIGTERM to SIGKILL after a grace period to prevent zombie processes
 export function gracefulKill(child: ChildProcess, timeoutMs = 3000): void {
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
@@ -333,17 +314,14 @@ export function gracefulKill(child: ChildProcess, timeoutMs = 3000): void {
     if (child.exitCode === null && child.signalCode === null) {
       try {
         child.kill('SIGKILL');
-      } catch {
-        // 이미 종료된 경우 무시
-      }
+      } catch {}
     }
   }, timeoutMs);
   killTimer.unref?.();
-  // 프로세스가 정상 종료되면 타이머 취소
   child.once('close', () => clearTimeout(killTimer));
 }
 
-// 간이 토큰 추정 (문자수 / 4)
+// Rough token heuristic: ~4 characters per token
 function estimateTokens(text: string): {
   promptTokens: number;
   completionTokens: number;

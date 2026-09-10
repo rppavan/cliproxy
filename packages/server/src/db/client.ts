@@ -12,7 +12,6 @@ export async function initDatabase(dbPath: string) {
 
   client = createClient({ url: `file:${dbPath}` });
 
-  // PRAGMA 설정
   await client.execute('PRAGMA journal_mode = WAL');
   await client.execute('PRAGMA foreign_keys = ON');
 
@@ -130,55 +129,38 @@ async function createTables(client: Client) {
     CREATE INDEX IF NOT EXISTS idx_cache_expires ON response_cache(expires_at);
   `);
 
-  // 기존 DB 마이그레이션: debug_logs에 컬럼 추가 (이미 존재하면 무시)
+  // SQLite lacks 'ADD COLUMN IF NOT EXISTS'; ignore errors if columns already exist.
   const httpColumns = ['http_request', 'http_response', 'http_stream_lines', 'raw_response_text'];
   for (const col of httpColumns) {
     try {
       await client.execute(`ALTER TABLE debug_logs ADD COLUMN ${col} TEXT`);
     } catch {
-      // 이미 존재하면 무시
+      // Ignored if column already exists.
     }
   }
 
-  // 기존 DB 마이그레이션: model_mappings.reasoning_effort 컬럼 (이미 존재하면 무시)
   try {
     await client.execute('ALTER TABLE model_mappings ADD COLUMN reasoning_effort TEXT');
-  } catch {
-    // 이미 존재하면 무시
-  }
+  } catch {}
 
-  // 기존 DB 마이그레이션: request_logs / debug_logs.reasoning_effort 컬럼
   try {
     await client.execute('ALTER TABLE request_logs ADD COLUMN reasoning_effort TEXT');
-  } catch {
-    // 이미 존재하면 무시
-  }
+  } catch {}
   try {
     await client.execute('ALTER TABLE debug_logs ADD COLUMN reasoning_effort TEXT');
-  } catch {
-    // 이미 존재하면 무시
-  }
+  } catch {}
 
-  // 기존 DB 마이그레이션: model_mappings.provider_overrides (JSON 직렬화 문자열)
   try {
     await client.execute('ALTER TABLE model_mappings ADD COLUMN provider_overrides TEXT');
-  } catch {
-    // 이미 존재하면 무시
-  }
+  } catch {}
 
-  // 기존 DB 마이그레이션: model_mappings.include_reasoning (NULL=상속, 0/1=명시)
   try {
     await client.execute('ALTER TABLE model_mappings ADD COLUMN include_reasoning INTEGER');
-  } catch {
-    // 이미 존재하면 무시
-  }
+  } catch {}
 
-  // 기존 DB 마이그레이션: model_mappings.extra_body (백엔드 비표준 필드 JSON 패스스루)
   try {
     await client.execute('ALTER TABLE model_mappings ADD COLUMN extra_body TEXT');
-  } catch {
-    // 이미 존재하면 무시
-  }
+  } catch {}
 }
 
 export function getDatabase() {

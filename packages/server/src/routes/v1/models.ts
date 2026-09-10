@@ -10,7 +10,6 @@ export interface ModelsRouteDeps {
 }
 
 export function registerModelsRoute(app: FastifyInstance, deps?: ModelsRouteDeps): void {
-  // 모델 목록
   app.get('/v1/models', async (_request, reply) => {
     if (deps?.modelCatalog) {
       const catalogModels = await deps.modelCatalog.getModels();
@@ -34,7 +33,7 @@ export function registerModelsRoute(app: FastifyInstance, deps?: ModelsRouteDeps
       .from(modelMappings)
       .where(eq(modelMappings.enabled, true));
 
-    // alias 기준 중복 제거 (같은 alias에 여러 provider가 매핑될 수 있음)
+    // Deduplicate by alias across multiple provider fallbacks.
     const uniqueAliases = new Map<string, typeof mappings[0]>();
     for (const m of mappings) {
       if (!uniqueAliases.has(m.alias)) {
@@ -57,7 +56,6 @@ export function registerModelsRoute(app: FastifyInstance, deps?: ModelsRouteDeps
     return reply.send(response);
   });
 
-  // 단일 모델 조회
   app.get<{ Params: { id: string } }>('/v1/models/:id', async (request, reply) => {
     const { id } = request.params;
 

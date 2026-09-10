@@ -132,7 +132,7 @@ async function submitJob(
   const baseUrl = trimTrailingSlash(endpointUrl);
   const body = {
     prompt: promptInfo.prompt,
-    // user_prompt: 내장 bridge가 system과 user를 중복 없이 재구성하도록 분리 전달 (외부 bridge는 무시)
+    // Pass user_prompt separately so built-in bridge can reconstruct system and user prompts without duplicates
     user_prompt: promptInfo.userPrompt,
     system: promptInfo.systemPrompt || undefined,
     model: config.model,

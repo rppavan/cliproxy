@@ -4,7 +4,6 @@ import type { CacheConfig, ChatMessage } from '@star-cliproxy/shared';
 import { getDatabase } from '../db/client.js';
 import { responseCache } from '../db/schema.js';
 
-// 캐시 조회 결과 타입
 export interface CachedResponse {
   responseBody: string;
   tokenCount: number | null;
@@ -19,13 +18,11 @@ export class ResponseCache {
     this.config = config;
   }
 
-  // SHA-256(modelAlias + JSON.stringify(messages)) 으로 해시 키 생성
   generateHash(modelAlias: string, messages: ChatMessage[]): string {
     const payload = modelAlias + JSON.stringify(messages);
     return createHash('sha256').update(payload).digest('hex');
   }
 
-  // 캐시 조회: 해시로 조회, 만료 확인, 없거나 만료면 null
   async get(requestHash: string): Promise<CachedResponse | null> {
     if (!this.config.enabled) return null;
 
@@ -41,10 +38,8 @@ export class ResponseCache {
 
       const row = rows[0];
 
-      // 만료 확인
       const now = new Date().toISOString();
       if (row.expiresAt <= now) {
-        // 만료된 항목 삭제
         await db.delete(responseCache).where(eq(responseCache.requestHash, requestHash));
         return null;
       }
@@ -56,13 +51,12 @@ export class ResponseCache {
         modelAlias: row.modelAlias,
       };
     } catch (err) {
-      // 캐시 실패가 요청을 중단시키지 않도록
+      // Cache failure must not disrupt request processing.
       console.error('Cache get failed:', err);
       return null;
     }
   }
 
-  // 캐시 저장: maxEntries 초과 시 가장 오래된 항목 삭제
   async set(
     requestHash: string,
     modelAlias: string,
@@ -77,14 +71,12 @@ export class ResponseCache {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + this.config.ttlSeconds * 1000);
 
-      // count → delete → insert를 단일 트랜잭션으로 묶어 원자성 보장
+      // Single transaction ensures atomic eviction and insertion under concurrency.
       await db.transaction(async (tx) => {
-        // maxEntries 초과 시 가장 오래된 항목 삭제
         const countResult = await tx.select({ value: count() }).from(responseCache);
         const currentCount = (countResult[0]?.value ?? 0) as number;
 
         if (currentCount >= this.config.maxEntries) {
-          // 삭제할 항목 수: 새 항목 삽입 후 maxEntries 이하가 되도록
           const deleteCount = currentCount - this.config.maxEntries + 1;
           const oldest = await tx
             .select({ requestHash: responseCache.requestHash })
@@ -97,7 +89,6 @@ export class ResponseCache {
           }
         }
 
-        // upsert: 같은 해시가 있으면 덮어쓰기
         await tx
           .insert(responseCache)
           .values({
@@ -120,18 +111,16 @@ export class ResponseCache {
           });
       });
     } catch (err) {
-      // 캐시 실패가 요청을 중단시키지 않도록
+      // Cache failure must not disrupt request processing.
       console.error('Cache set failed:', err);
     }
   }
 
-  // 만료된 캐시 정리 (주기적)
   async cleanup(): Promise<number> {
     try {
       const db = getDatabase();
       const now = new Date().toISOString();
 
-      // 만료된 항목 수 조회
       const expiredCount = await db
         .select({ value: count() })
         .from(responseCache)
@@ -139,7 +128,6 @@ export class ResponseCache {
 
       const deletedCount = expiredCount[0]?.value ?? 0;
 
-      // 만료된 항목 삭제
       if (deletedCount > 0) {
         await db.delete(responseCache).where(lte(responseCache.expiresAt, now));
       }
@@ -151,7 +139,6 @@ export class ResponseCache {
     }
   }
 
-  // 캐시 통계 (대시보드용)
   async getStats(): Promise<{ count: number; oldestAt: string | null }> {
     try {
       const db = getDatabase();

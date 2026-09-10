@@ -1,6 +1,3 @@
-// 설정 파일 타입 정의
-
-// EndpointType은 PluginEntry에서 사용
 import type { EndpointType, ReasoningEffort } from './provider.js';
 
 export interface ServerConfig {
@@ -29,51 +26,48 @@ export interface AuthConfig {
   }>;
 }
 
-// Claude Agent SDK 전용 옵션 (mode: 'sdk'일 때만 사용)
 export interface ClaudeSdkOptions {
-  max_turns?: number;              // 최대 에이전트 턴 수 (기본 50)
-  permission_mode?: string;        // 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk'
-  allowed_tools?: string[];        // 자동 승인 도구 목록 (Read, Write 등)
-  disallowed_tools?: string[];     // 차단 도구 목록
-  max_budget_usd?: number;         // 요청당 최대 비용 제한 (USD)
-  session_ttl_ms?: number;         // 세션 TTL (기본 1800000 = 30분)
-  enable_session_reuse?: boolean;  // 세션 재사용 활성화 (기본 true)
-  persist_session?: boolean;       // 디스크 세션 저장 (기본 false)
+  max_turns?: number;
+  permission_mode?: string;
+  allowed_tools?: string[];
+  disallowed_tools?: string[];
+  max_budget_usd?: number;
+  session_ttl_ms?: number;
+  enable_session_reuse?: boolean;
+  persist_session?: boolean;
 }
 
-// Claude Code Channel worker 옵션 (mode: 'channel-worker'일 때 사용)
-// 외부에서 실행 중인 Channel bridge에 job을 제출하고 완료 상태를 polling한다.
-// managed=true이면 star-cliproxy가 내장 bridge 프로세스를 직접 spawn/관리한다.
+// Submits jobs to an external Channel bridge and polls for completion.
+// When managed is true, cliproxy spawns and supervises the internal bridge process.
 export interface ClaudeChannelOptions {
-  endpoint_url?: string;            // 예: http://127.0.0.1:8788 (managed면 bridge_port로 자동 유추)
-  api_key?: string;                 // 선택적 Bearer token (managed bridge에도 그대로 주입)
-  poll_interval_ms?: number;        // 상태 polling 간격 (기본 500ms)
-  result_timeout_ms?: number;       // job 완료 대기 시간 (기본 provider timeout_ms)
-  response_schema?: Record<string, unknown>; // bridge에 전달할 선택적 JSON schema
+  endpoint_url?: string;
+  api_key?: string;
+  poll_interval_ms?: number;
+  result_timeout_ms?: number;
+  response_schema?: Record<string, unknown>;
   isolation?: 'external' | 'one-job-per-worker' | 'shared-session';
-  // --- bridge 라이프사이클 (star-cliproxy가 직접 관리할 때) ---
-  managed?: boolean;                // true면 star-cliproxy가 bridge 프로세스를 spawn/supervise (기본 false=외부 bridge)
-  auto_start?: boolean;             // 서버 부팅 시 managed bridge 자동 시작 (기본 false)
-  bridge_port?: number;             // 내장 bridge 리스닝 포트 (기본 8788)
-  bridge_command?: string;          // 커스텀 bridge 실행 커맨드. 비우면 내장 bridge 사용 (예: "node my-bridge.js")
+  managed?: boolean;
+  auto_start?: boolean;
+  bridge_port?: number;
+  bridge_command?: string;
 }
 
-// Codex App Server 전용 옵션 (mode: 'app-server'일 때만 사용)
 export interface CodexAppServerOptions {
-  transport?: 'stdio' | 'websocket';     // 전송 방식 (기본 'stdio', websocket은 실험적)
-  websocket_url?: string;                 // transport: 'websocket'일 때 URL (예: ws://127.0.0.1:4500)
-  session_ttl_ms?: number;                // thread 재사용 TTL (기본 1800000 = 30분)
-  enable_session_reuse?: boolean;         // thread 재사용 활성화 (기본 true)
-  max_turns?: number;                     // 턴 제한
-  auto_restart?: boolean;                 // 크래시 시 자동 재시작 (기본 true)
-  max_restart_count?: number;             // 재시작 상한 (기본 5)
+  transport?: 'stdio' | 'websocket';
+  websocket_url?: string;
+  session_ttl_ms?: number;
+  enable_session_reuse?: boolean;
+  max_turns?: number;
+  auto_restart?: boolean;
+  max_restart_count?: number;
 }
 
-// Codex CLI 모드 전용 옵션 (mode: 'cli' 또는 미지정 시 적용)
 export interface CodexCliOptions {
-  ephemeral?: boolean;                    // codex exec --ephemeral 자동 주입 (기본 true) — 세션 jsonl 디스크 기록 차단
-  enable_session_reuse?: boolean;         // codex exec resume <thread_id> 기반 세션 재사용 (기본 false). true 시 ephemeral은 강제 false
-  session_ttl_ms?: number;                // 세션 TTL (기본 1800000 = 30분). enable_session_reuse=true일 때만 유효
+  // Injects --ephemeral to prevent session jsonl accumulation on disk.
+  ephemeral?: boolean;
+  // Reuses sessions via `codex exec resume <thread_id>`. When enabled, ephemeral is forced to false.
+  enable_session_reuse?: boolean;
+  session_ttl_ms?: number;
 }
 
 export interface ProviderConfigYaml {
@@ -84,15 +78,14 @@ export interface ProviderConfigYaml {
   timeout_ms: number;
   extra_args: string[];
   working_dir?: string;
-  mode?: 'cli' | 'sdk' | 'app-server' | 'channel-worker';  // 실행 모드 (기본 'cli')
-  sdk_options?: ClaudeSdkOptions;         // mode: 'sdk'일 때 사용 (Claude)
-  channel_options?: ClaudeChannelOptions;  // mode: 'channel-worker'일 때 사용 (Claude)
-  app_server_options?: CodexAppServerOptions; // mode: 'app-server'일 때 사용 (Codex)
-  cli_options?: CodexCliOptions;          // mode: 'cli'일 때 사용 (Codex)
+  mode?: 'cli' | 'sdk' | 'app-server' | 'channel-worker';
+  sdk_options?: ClaudeSdkOptions;
+  channel_options?: ClaudeChannelOptions;
+  app_server_options?: CodexAppServerOptions;
+  cli_options?: CodexCliOptions;
 }
 
-// OpenAI tool_calls를 지원하지 않는 CLI를 구조화 출력으로 감싸는 별도 프로바이더.
-// 기존 provider 설정을 상속하되 런타임 등록 이름은 독립적이다.
+// Standalone provider that wraps CLIs lacking native tool_calls with structured output.
 export interface ToolBridgeProviderConfig extends ProviderConfigYaml {
   baseProvider: string;
   driver: 'claude-cli' | 'codex-cli' | 'grok-cli';
@@ -119,11 +112,10 @@ export interface ModelMappingSeed {
   provider: string;
   actual_model: string;
   reasoning_effort?: ReasoningEffort;
-  provider_overrides?: ProviderOverrides;  // 모델 레벨 옵션 오버라이드 (화이트리스트 기반)
+  provider_overrides?: ProviderOverrides;
 }
 
-// 모델 매핑 단위 오버라이드. ProviderConfigYaml의 화이트리스트 키만 허용
-// (mergeProviderConfig에서 검증). yaml/DB 모두 동일 구조 사용.
+// Whitelist-validated per-mapping overrides merged by mergeProviderConfig.
 export interface ProviderOverrides {
   mode?: ProviderConfigYaml['mode'];
   extra_args?: string[];
@@ -134,8 +126,7 @@ export interface ProviderOverrides {
   channel_options?: Partial<ClaudeChannelOptions>;
 }
 
-// 오버라이드 화이트리스트 (codex 한정 1차). 화이트리스트 외 키는 silent drop.
-// 다른 프로바이더 추가 시 별도 화이트리스트 정의 + mergeProviderConfig에 provider별 분기.
+// Whitelist of allowed override keys. Unlisted keys are dropped silently.
 export const CODEX_OVERRIDE_ALLOWED_KEYS = [
   'extra_args',
   'timeout_ms',
@@ -169,16 +160,16 @@ export const CLAUDE_OVERRIDE_ALLOWED_KEYS = [
 export type ClaudeOverrideKey = typeof CLAUDE_OVERRIDE_ALLOWED_KEYS[number];
 
 export interface ValidationConfig {
-  maxMessageCount: number;       // 메시지 배열 최대 수 (기본 800)
-  maxMessageLength: number;      // 개별 메시지 content 최대 길이 (기본 250000)
-  maxPromptLength: number;       // 전체 프롬프트 총 길이 (기본 1000000)
-  maxResponseLength: number;     // CLI 응답 최대 길이 (기본 300000)
-  bodyLimitBytes: number;        // HTTP 요청 본문 최대 크기 (기본 16MB)
+  maxMessageCount: number;
+  maxMessageLength: number;
+  maxPromptLength: number;
+  maxResponseLength: number;
+  bodyLimitBytes: number;
 }
 
 export interface PluginEntry {
-  path: string;                                              // 플러그인 디렉토리 경로
-  config?: Partial<ProviderConfigYaml> & Record<string, unknown>;  // 기본 설정 + 플러그인 고유 설정
+  path: string;
+  config?: Partial<ProviderConfigYaml> & Record<string, unknown>;
 }
 
 export interface AppConfig {

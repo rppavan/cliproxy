@@ -8,7 +8,7 @@ import type { ActiveRequestTracker } from '../../services/active-requests.js';
 import { HttpProvider } from '../../providers/http-provider.js';
 import { ToolBridgeProvider } from '../../providers/tool-bridge-provider.js';
 
-// 빌트인 프로바이더 — kind 분류용. 다른 곳의 동일 상수와 동기 유지 필요.
+// Built-in providers for kind classification. Must stay synchronized across provider registries.
 const BUILTIN_PROVIDER_NAMES = new Set(['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode']);
 type ProviderKind = 'builtin' | 'tool-bridge' | 'http' | 'plugin';
 
@@ -22,13 +22,11 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
   app.get<{ Querystring: { days?: string } }>('/admin/dashboard', async (request, reply) => {
     const db = getDatabase();
 
-    // 기간 필터 (days 파라미터, 0이면 전체)
     const days = parseInt(request.query.days ?? '0', 10);
     const dateFilter = days > 0
       ? sql`created_at >= datetime('now', '-${sql.raw(String(days))} days')`
       : undefined;
 
-    // 1. 요약 통계
     const statsQuery = db.select({
       totalRequests: sql<number>`count(*)`,
       successCount: sql<number>`coalesce(sum(case when status = 'success' then 1 else 0 end), 0)`,
@@ -43,8 +41,7 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
     const statsResult = dateFilter ? await statsQuery.where(dateFilter) : await statsQuery;
     const overview = statsResult[0];
 
-    // 1-1. P50 / P95 지연 (이상치에 강건한 분위수)
-    // 표준 select + offset 방식 — idx_logs_created_at 인덱스 활용 가능
+    // Computes P50/P95 using ordered offset selection to utilize the created_at index.
     const successLatencyFilter = dateFilter
       ? and(sql`status = 'success'`, sql`latency_ms IS NOT NULL`, dateFilter)
       : and(sql`status = 'success'`, sql`latency_ms IS NOT NULL`);
@@ -69,7 +66,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       p95LatencyMs = p95Row[0]?.l ?? 0;
     }
 
-    // 2. 오늘 통계
     const todayResult = await db.select({
       count: sql<number>`count(*)`,
       successCount: sql<number>`coalesce(sum(case when status = 'success' then 1 else 0 end), 0)`,
@@ -78,21 +74,18 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       .where(sql`date(created_at) = date('now')`);
     const today = todayResult[0];
 
-    // 3. 활성 API 키 수
     const keyCountResult = await db.select({
       total: sql<number>`count(*)`,
       active: sql<number>`sum(case when enabled = 1 then 1 else 0 end)`,
     }).from(apiKeys);
     const keyCount = keyCountResult[0];
 
-    // 4. 모델 매핑 수
     const mappingCountResult = await db.select({
       total: sql<number>`count(*)`,
       active: sql<number>`sum(case when enabled = 1 then 1 else 0 end)`,
     }).from(modelMappings);
     const mappingCount = mappingCountResult[0];
 
-    // 5. Provider 상태
     const healthData = await db.select().from(providerHealth);
     const providers = deps.registry.getAll().map((p) => {
       const health = healthData.find((h) => h.provider === p.name);
@@ -115,14 +108,12 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       };
     });
 
-    // 6. 캐시 통계
     const cacheResult = await db.select({
       totalEntries: sql<number>`count(*)`,
       activeEntries: sql<number>`sum(case when expires_at > datetime('now') then 1 else 0 end)`,
     }).from(responseCache);
     const cache = cacheResult[0];
 
-    // 7. Rate Limit 설정
     const rateLimitResult = await db.select()
       .from(settings)
       .where(eq(settings.key, 'rate_limits'));
@@ -131,7 +122,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       try { rateLimits = JSON.parse(rateLimitResult[0].value); } catch {}
     }
 
-    // 8. Provider별 통계 (사용량 내림차순 + 성공률 + 토큰)
     const providerStatsQuery = db.select({
       provider: requestLogs.provider,
       count: sql<number>`count(*)`,
@@ -148,8 +138,7 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       successRate: p.count > 0 ? (p.successCount / p.count) * 100 : 0,
     }));
 
-    // 8-1. Provider별 P95 지연 (SLA 카드용)
-    // 사용량이 많은 프로바이더만 계산 (n >= 5) — 통계적으로 의미 있는 표본
+    // Only compute provider P95 latency when sample size >= 5 for statistical validity.
     const providerP95Map = new Map<string, number>();
     const candidates = providerStats.filter((p) => p.successCount >= 5);
     await Promise.all(candidates.map(async (p) => {
@@ -167,7 +156,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       p95LatencyMs: providerP95Map.get(p.provider) ?? 0,
     }));
 
-    // 9. 인기 모델 (상위 20개로 확장 — 프론트엔드가 자체 Top-N 절단)
     const popularModelsQuery = db.select({
       modelAlias: requestLogs.modelAlias,
       provider: requestLogs.provider,
@@ -183,7 +171,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       successRate: m.count > 0 ? (m.successCount / m.count) * 100 : 0,
     }));
 
-    // 10. 24시간 시간대별 요청 추이 (모델별 breakdown + 토큰 포함)
     const hourlyTrend = await db.select({
       hour: sql<number>`cast(strftime('%H', created_at) as integer)`,
       count: sql<number>`count(*)`,
@@ -195,7 +182,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       .groupBy(sql`strftime('%H', created_at)`)
       .orderBy(sql`strftime('%H', created_at) ASC`);
 
-    // 10-1. 모델별 시간대 breakdown
     const hourlyByModel = await db.select({
       hour: sql<number>`cast(strftime('%H', created_at) as integer)`,
       modelAlias: requestLogs.modelAlias,
@@ -205,7 +191,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       .groupBy(sql`strftime('%H', created_at)`, requestLogs.modelAlias)
       .orderBy(sql`strftime('%H', created_at) ASC`);
 
-    // 11. 최근 요청 (10건)
     const recentRequestsQuery = db.select({
       id: requestLogs.id,
       modelAlias: requestLogs.modelAlias,
@@ -223,7 +208,6 @@ export function registerDashboardRoute(app: FastifyInstance, deps: DashboardDeps
       ? await recentRequestsQuery.where(dateFilter).orderBy(desc(requestLogs.createdAt)).limit(10)
       : await recentRequestsQuery.orderBy(desc(requestLogs.createdAt)).limit(10);
 
-    // 12. 최근 에러 (5건)
     const recentErrorsQuery = db.select({
       id: requestLogs.id,
       modelAlias: requestLogs.modelAlias,

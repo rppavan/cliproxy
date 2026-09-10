@@ -18,10 +18,8 @@ interface SeedMapping {
 }
 
 const CURRENT_CATALOG_ADDITIONS: SeedMapping[] = [
-  // 자동 선택되는 최상위 모델 + 한 단계 가벼운 명시적 모델만 기본 제공한다.
   { alias: 'antigravity', provider: 'agy', actual_model: 'antigravity' },
   { alias: 'gemini-3.6-flash-high', provider: 'agy', actual_model: 'gemini-3.6-flash', reasoning_effort: 'high' },
-  // 현재 Grok CLI 카탈로그에는 별도의 하위 모델이 없다.
   { alias: 'grok-4.5', provider: 'grok', actual_model: 'grok-4.5' },
 ];
 
@@ -147,7 +145,7 @@ async function migrateBuiltinCliMappings(): Promise<void> {
       ));
   }
 
-  // 제거된 Composer 기본 매핑만 비활성화한다. 다른 alias나 사용자가 바꾼 모델은 건드리지 않는다.
+  // Disable only the removed Composer default mapping, leaving user-modified models intact.
   await db
     .update(modelMappings)
     .set({ enabled: false, updatedAt: now })
@@ -207,7 +205,6 @@ async function seedOpencodeCatalog(): Promise<void> {
 export async function seedDatabase(config: AppConfig): Promise<void> {
   const db = getDatabase();
 
-  // 초기 API 키 시드
   for (const keyConfig of config.auth.initialKeys) {
     if (!keyConfig.key) continue;
 
@@ -230,11 +227,8 @@ export async function seedDatabase(config: AppConfig): Promise<void> {
     }
   }
 
-  // 모델 매핑 시드 (additive): config.yaml의 alias 중 DB에 없는 것만 추가한다.
-  // 기존 매핑은 절대 덮어쓰지 않는다 — DB가 런타임 SSOT이고 대시보드
-  // (admin/model-mappings)에서 편집한 매핑을 매 재시작마다 클로버링하면 회귀이기 때문.
-  // (이슈 #38: "매 재시작 강제 upsert" 제안을 검토 후 additive로 채택.)
-  // [followup] config에서 제거/수정한 매핑은 자동 삭제·갱신되지 않는다(추가만). 정리는 대시보드에서.
+  // Seed model mappings additively: only add aliases from config.yaml that are missing in the DB.
+  // Never overwrite existing mappings; the DB is the runtime SSOT and clobbering dashboard edits on restart would be a regression (#38).
   await migrateBuiltinCliMappings();
   await seedKimiCatalog();
   await seedOpencodeCatalog();

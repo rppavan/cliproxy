@@ -83,22 +83,22 @@ describe('CodexProvider buildArgs (resume branch)', () => {
       providerOverrides: { cli_options: { enable_session_reuse: true } },
     });
 
-    // 1차 호출로 SessionManager lazy 초기화 + 수동 thread 등록
+    // Call 1 triggers lazy SessionManager initialization + manual thread registration
     (provider as any).buildArgs(options);
     const sm = provider.getCliSessionManager();
     expect(sm).not.toBeNull();
     sm!.set('client-a', 'tid-XYZ', 'gpt-5.5');
 
-    // 2차 호출은 resume args
+    // Call 2 uses resume args
     const args2: string[] = (provider as any).buildArgs(options);
     expect(args2[0]).toBe('exec');
     expect(args2[1]).toBe('resume');
     expect(args2[2]).toBe('tid-XYZ');
     expect(args2).toContain('--json');
-    // -s, workspace-write는 자동 제거
+    // -s and workspace-write are stripped
     expect(args2).not.toContain('-s');
     expect(args2).not.toContain('workspace-write');
-    // 유지되는 옵션
+    // Retained options
     expect(args2).toContain('--skip-git-repo-check');
     expect(args2).toContain('-m');
     expect(args2).toContain('gpt-5.5');
@@ -117,7 +117,7 @@ describe('CodexProvider buildArgs (resume branch)', () => {
 
   it('enable_session_reuse=true + ephemeral 미지정 시에도 --ephemeral 미주입 (rollout 보존)', () => {
     provider = new CodexProvider(baseConfig({
-      cli_options: {},  // ephemeral 미지정 → 기본 true 폴백을 막아야 resume 가능
+      cli_options: {}, // Unspecified ephemeral -> prevents default true fallback to enable resume
     }));
     const args: string[] = (provider as any).buildArgs(baseOptions({
       clientKey: 'client-y',
@@ -144,10 +144,10 @@ describe('CodexProvider buildArgs (resume branch)', () => {
     (provider as any).buildArgs(opt('a'));
     const sm = provider.getCliSessionManager()!;
     sm.set('a', 'tid-A', 'gpt-5.5');
-    // b는 thread 없음
+    // 'b' has no cached thread
     const argsB: string[] = (provider as any).buildArgs(opt('b'));
     expect(argsB).not.toContain('resume');
-    // a는 thread 있음
+    // 'a' has cached thread
     const argsA: string[] = (provider as any).buildArgs(opt('a'));
     expect(argsA[1]).toBe('resume');
     expect(argsA[2]).toBe('tid-A');

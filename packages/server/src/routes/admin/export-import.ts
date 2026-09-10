@@ -75,11 +75,9 @@ interface ImportResult {
   skipped: string[];
 }
 
-// Import 데이터의 각 섹션 구조를 수동 검증 (외부 의존성 없이)
 function validateExportData(body: unknown): string | null {
   const data = body as Record<string, unknown>;
 
-  // modelMappings 검증
   if (data.modelMappings !== undefined) {
     if (!Array.isArray(data.modelMappings)) return 'modelMappings must be an array';
     for (const m of data.modelMappings) {
@@ -91,7 +89,6 @@ function validateExportData(body: unknown): string | null {
     }
   }
 
-  // rateLimits 검증
   if (data.rateLimits !== undefined) {
     if (!data.rateLimits || typeof data.rateLimits !== 'object') return 'rateLimits must be an object';
     const rl = data.rateLimits as Record<string, unknown>;
@@ -100,12 +97,10 @@ function validateExportData(body: unknown): string | null {
     if (typeof global.rpm !== 'number' || typeof global.rpd !== 'number') return 'rateLimits.global.rpm and rpd must be numbers';
   }
 
-  // validation 검증
   if (data.validation !== undefined) {
     if (!data.validation || typeof data.validation !== 'object') return 'validation must be an object';
   }
 
-  // apiKeys 검증
   if (data.apiKeys !== undefined) {
     if (!Array.isArray(data.apiKeys)) return 'apiKeys must be an array';
     for (const k of data.apiKeys) {
@@ -115,23 +110,20 @@ function validateExportData(body: unknown): string | null {
     }
   }
 
-  // providers 검증
   if (data.providers !== undefined) {
     if (!data.providers || typeof data.providers !== 'object') return 'providers must be an object';
   }
 
-  return null; // 유효
+  return null;
 }
 
 export function registerExportImportRoutes(
   app: FastifyInstance,
   deps: ExportImportDeps,
 ): void {
-  // 전체 설정 내보내기
   app.get('/admin/export', async (_request, reply) => {
     const db = getDatabase();
 
-    // 모델 매핑 조회
     const mappings = await db.select({
       alias: modelMappings.alias,
       provider: modelMappings.provider,
@@ -142,13 +134,10 @@ export function registerExportImportRoutes(
       enabled: modelMappings.enabled,
     }).from(modelMappings);
 
-    // Rate Limits 조회
     const rateLimits = await loadRateLimitsFromDb(deps.defaultRateLimits);
-
-    // Validation 조회
     const validation = deps.getValidation();
 
-    // API 키 조회 (keyHash 제외 — 보안)
+    // Omit keyHash for security
     const keys = await db.select({
       name: apiKeys.name,
       enabled: apiKeys.enabled,
@@ -156,7 +145,7 @@ export function registerExportImportRoutes(
       rateLimitRpd: apiKeys.rateLimitRpd,
     }).from(apiKeys);
 
-    // Providers (현재 런타임 설정 — DB 오버라이드 반영)
+    // Reflects runtime configuration merged with DB overrides
     const providers: ExportData['providers'] = {};
     for (const provider of deps.registry.getAll()) {
       const config = deps.registry.getProviderConfig(provider.name);
@@ -173,7 +162,6 @@ export function registerExportImportRoutes(
       }
     }
 
-    // Generic 프로바이더 (DB에서 조회)
     const genericProviders: Record<string, GenericCliProviderConfig> = {};
     const allSettings = await db.select().from(settings);
     for (const row of allSettings) {
@@ -181,7 +169,7 @@ export function registerExportImportRoutes(
         const name = row.key.replace(GENERIC_PROVIDER_PREFIX, '');
         try {
           genericProviders[name] = JSON.parse(row.value) as GenericCliProviderConfig;
-        } catch { /* 파싱 실패 무시 */ }
+        } catch {}
       }
     }
 
@@ -199,18 +187,15 @@ export function registerExportImportRoutes(
     return reply.send(exportData);
   });
 
-  // 설정 불러오기
   app.post<{ Body: ExportData }>('/admin/import', async (request, reply) => {
     const body = request.body;
 
-    // version 검증 (v1, v2 모두 허용)
     if (!body.version || body.version > EXPORT_VERSION) {
       return reply.status(400).send({
         error: { message: `Unsupported export version: ${body.version}. Expected: ${EXPORT_VERSION} or lower.` },
       });
     }
 
-    // 각 섹션 구조 검증
     const validationError = validateExportData(body);
     if (validationError) {
       return reply.status(400).send({
@@ -226,14 +211,14 @@ export function registerExportImportRoutes(
     let keysCreated = 0;
     let keysUpdated = 0;
 
-    // 1. 모델 매핑: 기존 전부 삭제 후 새로 삽입 (replace 전략)
+    // Replace all existing mappings
     if (body.modelMappings && Array.isArray(body.modelMappings)) {
       await db.delete(modelMappings);
       const now = new Date().toISOString();
 
       for (const mapping of body.modelMappings) {
         if (!mapping.alias || !mapping.provider || !mapping.actualModel) continue;
-        // 화이트리스트 외 reasoning_effort는 silently 무시 (import 호환성)
+        // Silently ignore non-whitelisted reasoning_effort for import compatibility
         const rawEffort = typeof mapping.reasoningEffort === 'string'
           ? mapping.reasoningEffort.trim().toLowerCase()
           : null;
@@ -254,7 +239,6 @@ export function registerExportImportRoutes(
       }
     }
 
-    // 2. Rate Limits: settings 테이블에 upsert
     if (body.rateLimits) {
       const value = JSON.stringify(body.rateLimits);
       const now = new Date().toISOString();
@@ -266,17 +250,15 @@ export function registerExportImportRoutes(
         await db.update(settings).set({ value, updatedAt: now }).where(eq(settings.key, RATE_LIMITS_KEY));
       }
 
-      // 인메모리 즉시 반영
       deps.rateLimiter.updateConfig(body.rateLimits);
       rateLimitsImported = true;
     }
 
-    // 3. Validation: settings 테이블에 upsert
     if (body.validation) {
       const currentValidation = deps.getValidation();
       const normalizedValidation: ValidationConfig = {
         ...body.validation,
-        // Fastify bodyLimit는 런타임 변경 불가 — 현재 값 유지
+        // Fastify bodyLimit cannot be modified at runtime; retain current setting
         bodyLimitBytes: currentValidation.bodyLimitBytes,
       };
       const value = JSON.stringify(normalizedValidation);
@@ -289,12 +271,11 @@ export function registerExportImportRoutes(
         await db.update(settings).set({ value, updatedAt: now }).where(eq(settings.key, VALIDATION_KEY));
       }
 
-      // 인메모리 즉시 반영
       deps.setValidation(normalizedValidation);
       validationImported = true;
     }
 
-    // 4. API 키: name 기반 매칭 — 없으면 새 키 생성, 있으면 설정만 업데이트
+    // Match by name: create if not found, otherwise update properties without overwriting keyHash
     if (body.apiKeys && Array.isArray(body.apiKeys)) {
       for (const keyData of body.apiKeys) {
         if (!keyData.name) continue;
@@ -302,7 +283,6 @@ export function registerExportImportRoutes(
         const existing = await db.select().from(apiKeys).where(eq(apiKeys.name, keyData.name)).limit(1);
 
         if (existing.length === 0) {
-          // 새 키 생성 (키 자동 생성)
           const rawKey = `${API_KEY_PREFIX}${randomBytes(24).toString('hex')}`;
           await db.insert(apiKeys).values({
             id: nanoid(),
@@ -316,7 +296,6 @@ export function registerExportImportRoutes(
           });
           keysCreated++;
         } else {
-          // 기존 키 설정만 업데이트 (keyHash는 변경하지 않음)
           const updates: Record<string, unknown> = {};
           if (keyData.enabled !== undefined) updates.enabled = keyData.enabled;
           if (keyData.rateLimitRpm !== undefined) updates.rateLimitRpm = keyData.rateLimitRpm;
@@ -330,12 +309,11 @@ export function registerExportImportRoutes(
       }
     }
 
-    // 5. Providers: DB 오버라이드로 저장 + 인메모리 반영
     let providersImported = 0;
     if (body.providers && typeof body.providers === 'object') {
       const now = new Date().toISOString();
       for (const [name, providerConfig] of Object.entries(body.providers)) {
-        // 레지스트리에 존재하는 프로바이더만 적용
+        // Only apply overrides to already-registered providers
         if (!deps.registry.getProviderConfig(name)) {
           skipped.push(`provider "${name}" (not registered)`);
           continue;
@@ -353,13 +331,11 @@ export function registerExportImportRoutes(
         const sanitizedOverride = sanitizeRuntimeProviderConfig(name, override);
         if (Object.keys(sanitizedOverride).length === 0) continue;
 
-        // 인메모리 반영
         deps.registry.updateProviderConfig(name, sanitizedOverride);
         if (sanitizedOverride.max_concurrent) {
           deps.queueManager.updateConcurrency(name, sanitizedOverride.max_concurrent);
         }
 
-        // DB 영속화
         const dbKey = `provider_config:${name}`;
         const existing = await db.select().from(settings).where(eq(settings.key, dbKey)).limit(1);
         const existingOverride = existing.length > 0
@@ -377,14 +353,12 @@ export function registerExportImportRoutes(
       }
     }
 
-    // 6. Generic 프로바이더: DB 저장 + 런타임 등록
     let genericProvidersImported = 0;
     if (body.genericProviders && typeof body.genericProviders === 'object') {
       const now = new Date().toISOString();
       const BUILTIN_NAMES = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode'];
 
       for (const [name, genericConfig] of Object.entries(body.genericProviders)) {
-        // 빌트인 이름 충돌 방지
         if (BUILTIN_NAMES.includes(name)) {
           skipped.push(`generic provider "${name}" (conflicts with built-in)`);
           continue;
@@ -394,7 +368,6 @@ export function registerExportImportRoutes(
           continue;
         }
 
-        // DB 저장 (upsert)
         const dbKey = `${GENERIC_PROVIDER_PREFIX}${name}`;
         const value = JSON.stringify(genericConfig);
         const existing = await db.select().from(settings).where(eq(settings.key, dbKey)).limit(1);
@@ -405,7 +378,6 @@ export function registerExportImportRoutes(
           await db.update(settings).set({ value, updatedAt: now }).where(eq(settings.key, dbKey));
         }
 
-        // 런타임 등록 (기존이면 교체)
         if (deps.registry.has(name)) {
           deps.registry.unregister(name);
         }

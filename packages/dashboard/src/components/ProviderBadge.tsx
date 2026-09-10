@@ -3,49 +3,37 @@ import type { ReactNode } from 'react';
 interface ProviderBadgeProps {
   provider: string;
   size?: 'sm' | 'md';
-  // chip 형태로 표시 (테이블 셀, 폼). false면 icon만.
   showLabel?: boolean;
-  // 추가 className 합성
   className?: string;
 }
 
-// 빌트인 + 알려진 플러그인 색상 매핑. Tailwind safelist를 위해 정적 클래스 사용.
-// 각 provider마다 light/dark 토큰을 명시해야 tailwind JIT가 emit한다.
+// Static class mappings ensure Tailwind JIT emits both light and dark variant classes.
 interface ProviderStyle {
-  // chip 배경 + 텍스트 (light/dark 둘 다)
   chip: string;
-  // 좌측 컬러바 (사용하는 곳에서 색만 가져갈 때)
   accent: string;
-  // SVG 아이콘 — 16x16 viewBox 24
   icon: ReactNode;
   label: string;
 }
 
 const ICON_PATHS: Record<string, ReactNode> = {
-  // Claude — 별 모양 (Anthropic 컬러 아이덴티티 ★)
   claude: (
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3z" />
   ),
-  // Codex/OpenAI — 6-knot (꼬임 매듭) 단순화
   codex: (
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4" />
   ),
-  // Copilot — 채팅 말풍선 + 짧은 꼬리
   copilot: (
     <path strokeLinecap="round" strokeLinejoin="round" d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
   ),
-  // Gemini — 4점 별 (Google Gemini 마크 단순화)
   gemini: (
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8L12 2z" />
   ),
-  // Antigravity — 위로 향하는 화살표(중력 반대) + 원
   agy: (
     <>
       <circle cx="12" cy="12" r="9" strokeLinecap="round" strokeLinejoin="round" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 17V8m-3 3l3-3 3 3" />
     </>
   ),
-  // Kimi — 달의 초승달 형태를 단순화
   kimi: (
     <path
       strokeLinecap="round"
@@ -94,7 +82,7 @@ const STYLE_MAP: Record<string, ProviderStyle> = {
   },
 };
 
-// 미등록 provider용 결정론적 폴백 — 이름 해시로 5색 중 하나에 할당
+// Deterministic fallback color assigned by hashing unregistered provider names
 const FALLBACK_STYLES: ProviderStyle[] = [
   { chip: 'bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-300/60 dark:border-rose-500/30', accent: 'bg-rose-500', icon: ICON_PATHS.claude, label: '' },
   { chip: 'bg-pink-100 dark:bg-pink-500/15 text-pink-700 dark:text-pink-300 border-pink-300/60 dark:border-pink-500/30', accent: 'bg-pink-500', icon: ICON_PATHS.claude, label: '' },

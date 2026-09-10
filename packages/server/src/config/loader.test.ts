@@ -1,6 +1,3 @@
-// config loader Zod 검증 테스트 (#30)
-// 기존 동작 보존(기본값 폴백, env 치환, null 허용) + 신규 fail-fast 검증
-
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -79,7 +76,6 @@ model_mappings:
     expect(config.providers.claude.enabled).toBe(false);
     expect(config.providers.claude.cli_path).toBe('/usr/local/bin/claude');
     expect(config.providers.claude.timeout_ms).toBe(60000);
-    // 미지정 필드는 기본값 유지
     expect(config.providers.claude.max_concurrent).toBe(DEFAULT_MAX_CONCURRENT);
     expect(config.providers.codex.timeout_ms).toBe(DEFAULT_TIMEOUT_MS);
     expect(config.modelMappings).toEqual([
@@ -94,7 +90,7 @@ model_mappings:
   });
 
   it('null 값(빈 env var 치환 등)은 기본값으로 폴백한다', () => {
-    // YAML에서 "port:" 처럼 값이 비면 null — 기존 ?? 폴백 동작 유지
+    // Empty YAML values parse as null; fallback to defaults preserves ?? semantics.
     const path = writeConfig(`
 server:
   port:
@@ -423,7 +419,7 @@ server:
 
 describe('loadConfig — 실제 예제 config 회귀', () => {
   it('저장소의 config.example.yaml이 검증을 통과한다', () => {
-    // 프로젝트 루트의 예제 config — 스키마가 실제 사용 형태와 어긋나지 않는지 보증
+    // Verify that config.example.yaml conforms to the schema.
     const examplePath = join(import.meta.dirname, '../../../../config.example.yaml');
     const config = loadConfig(examplePath);
     expect(

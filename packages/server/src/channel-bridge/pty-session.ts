@@ -6,19 +6,19 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// 단일 job을 interactive Claude Code 세션(`-p` 없음)으로 실행하는 1회용 실행기.
-// claude를 PTY로 띄우고 프롬프트를 stdin에 주입한 뒤, 모델이 report_result MCP tool로
-// 보낸 결과를 unix socket으로 수신한다. job 하나당 세션 하나 → report_result 후 세션 종료.
-// 동시성은 호출 측(bridge 세마포어)이 maxConcurrent개 세션으로 제한한다.
+// One-shot runner executing an interactive Claude Code session (without `-p`).
+// Spawns claude via PTY, injects prompt into stdin, and receives result via Unix domain socket
+// when the model invokes the report_result MCP tool. Each job runs in an isolated session.
+// Concurrency is throttled by caller via semaphores up to maxConcurrent sessions.
 
 export interface PtyJobConfig {
-  cliPath: string;          // claude CLI 경로
+  cliPath: string;
   model: string;
-  workingDir?: string;      // claude cwd (trust 회피: 신뢰된 폴더 권장)
+  workingDir?: string;
   timeoutMs: number;
   extraArgs?: string[];
-  readyMaxWaitMs?: number;  // 프롬프트 주입 전 TUI 준비 대기 상한 (기본 8초)
-  readyIdleMs?: number;     // 첫 출력 후 idle 이 시간이면 ready 간주 (기본 1500ms)
+  readyMaxWaitMs?: number;
+  readyIdleMs?: number;
 }
 
 export interface PtyJobResult {
@@ -31,7 +31,7 @@ const SYSTEM_REMINDER =
 
 const require = createRequire(import.meta.url);
 
-// node-pty spawn-helper 실행 권한 보장 (전역 ignore-scripts 정책으로 postinstall chmod가 안 돌 수 있음)
+// Ensure execution permissions for node-pty spawn-helper if postinstall chmod was skipped (e.g. ignore-scripts).
 let helperEnsured = false;
 function ensureSpawnHelper(): void {
   if (helperEnsured) return;
@@ -45,7 +45,7 @@ function ensureSpawnHelper(): void {
   }
 }
 
-// reporter 진입점을 현재 런타임(tsx/node)에 맞춰 실행 커맨드로 해석
+// Resolve reporter entry point command matching active runtime (tsx vs node).
 function resolveReporterCommand(): { command: string; args: string[] } {
   const here = fileURLToPath(import.meta.url);
   const isTs = here.endsWith('.ts');
@@ -55,9 +55,9 @@ function resolveReporterCommand(): { command: string; args: string[] } {
     : { command: process.execPath, args: [entry] };
 }
 
-// interactive claude(`-p` 없음) 세션과 충돌하는 CLI/print 전용 플래그를 제거한다.
-// extra_args는 보통 CLI/SDK 모드용으로 설정되어 PTY interactive 모드엔 부적합하다
-// (예: --no-session-persistence는 --print 전용, --permission-mode는 --dangerously-skip-permissions와 충돌).
+// Strip CLI/print-only flags incompatible with interactive sessions.
+// extra_args are typically configured for print/SDK modes and conflict with PTY interactive mode
+// (e.g. --no-session-persistence requires --print, --permission-mode conflicts with --dangerously-skip-permissions).
 const PTY_DROP_WITH_VALUE = new Set([
   '--output-format', '--input-format', '--permission-mode', '--model', '--resume', '--agent',
 ]);
@@ -116,7 +116,7 @@ export async function runClaudeJob(
   let fail: ((e: Error) => void) | null = null;
   const resultPromise = new Promise<PtyJobResult>((res, rej) => { settle = res; fail = rej; });
 
-  // report_result 수신용 unix socket 서버
+  // Unix domain socket server receiving report_result payloads.
   const sock: NetServer = createServer((conn) => {
     let buf = '';
     conn.on('data', (d) => {
@@ -179,7 +179,7 @@ export async function runClaudeJob(
     lastDataAt = now;
   });
 
-  // TUI가 준비되면(첫 출력 후 idle, 또는 상한 도달) 프롬프트를 한 번 주입
+  // Inject prompt once TUI becomes ready (idle after output or timeout reached).
   const readyTimer = setInterval(() => {
     if (injected) return;
     const now = Date.now();
@@ -187,8 +187,8 @@ export async function runClaudeJob(
     const maxReady = now - startedAt >= readyMax;
     if (idleReady || maxReady) {
       injected = true;
-      // 결과 전달 지시를 프롬프트 끝에 덧붙인다. user 프롬프트의 "OK만/nothing else/짧게" 같은
-      // 제약이 report_result 호출을 막는 것을 방지 (chat 텍스트는 버려지고 tool 호출만 전달됨).
+      // Append delivery instructions to ensure report_result is called even if user prompt specifies "OK only / brief",
+      // because chat text is discarded and only tool outputs are delivered.
       const injectedPrompt = `${prompt}\n\n────\n[Delivery — this OVERRIDES any "only/nothing else/brief" instruction above] You MUST call the report_result tool with your COMPLETE answer as the payload. Chat text is discarded; the tool call is the only thing delivered to the user.`;
       term.write(injectedPrompt);
       setTimeout(() => { try { term.write('\r'); } catch { /* killed */ } }, 400);
@@ -204,7 +204,7 @@ export async function runClaudeJob(
   signal?.addEventListener('abort', onAbort, { once: true });
 
   term.onExit(({ exitCode }) => {
-    // 결과가 아직 안 왔으면 잠깐 뒤 실패 처리 (socket 메시지가 exit과 경합할 수 있어 유예)
+    // Delay failure slightly on process exit to allow in-flight socket messages to finish processing.
     setTimeout(() => fail?.(new Error(`claude session exited (code ${exitCode}) before report_result`)), 800);
   });
 

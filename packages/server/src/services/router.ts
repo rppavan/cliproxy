@@ -10,13 +10,12 @@ export interface ResolvedRoute {
   actualModel: string;
   reasoningEffort?: ReasoningEffort;
   providerOverrides?: ProviderOverrides;
-  // null=상속(전역 default), true/false=명시
+  // null inherits global default; boolean sets explicitly.
   includeReasoning?: boolean | null;
-  // 백엔드 비표준 필드 패스스루 (HTTP provider 전용)
+  // Non-standard backend field passthrough (HTTP providers only).
   extraBody?: Record<string, unknown>;
 }
 
-// DB의 provider_overrides JSON 문자열을 파싱. 파싱 실패는 warn + null fallback.
 function parseProviderOverrides(raw: string | null | undefined): ProviderOverrides | undefined {
   if (!raw) return undefined;
   try {
@@ -30,7 +29,6 @@ function parseProviderOverrides(raw: string | null | undefined): ProviderOverrid
   return undefined;
 }
 
-// extra_body JSON 파싱. 객체가 아니면 무시.
 function parseExtraBody(raw: string | null | undefined): Record<string, unknown> | undefined {
   if (!raw) return undefined;
   try {
@@ -53,7 +51,6 @@ export class ModelRouter {
     this.catalog = catalog;
   }
 
-  // 모델 alias를 provider + actual_model로 해석 (priority순 폴백 포함)
   async resolve(modelAlias: string): Promise<ResolvedRoute[]> {
     const db = getDatabase();
 
@@ -66,7 +63,6 @@ export class ModelRouter {
       ))
       .orderBy(asc(modelMappings.priority));
 
-    // 활성화된 provider만 필터링
     const enabledRoutes = mappings
       .filter((m) => (
         this.registry.has(m.provider)
@@ -85,7 +81,7 @@ export class ModelRouter {
       return enabledRoutes;
     }
 
-    // 매핑이 없거나 활성 매핑이 없으면, ModelCatalog에서 실시간 CLI 모델 확인
+    // Check ModelCatalog if no active mapping was found in the database.
     if (this.catalog) {
       const catalogModel = await this.catalog.getModel(modelAlias);
       if (
@@ -101,7 +97,6 @@ export class ModelRouter {
       }
     }
 
-    // provider를 alias에서 추론
     const inferredProvider = this.inferProvider(modelAlias);
     if (inferredProvider && this.registry.has(inferredProvider) && this.registry.getProviderConfig(inferredProvider)?.enabled !== false) {
       return [{ provider: inferredProvider, actualModel: modelAlias }];
@@ -109,37 +104,28 @@ export class ModelRouter {
     return [];
   }
 
-  // 모델명에서 provider 추론 (접두사 기반, 오탐 방지)
-  // "my-opus-experiment" 같은 사용자 정의 모델명이 잘못 라우팅되지 않도록
-  // 공식 모델명 접두사 패턴만 매칭
+  // Infer provider by prefix; strictly match official prefixes to prevent false positives on custom aliases.
   private inferProvider(model: string): string | null {
     const lower = model.toLowerCase();
 
-    // Claude: claude-*, sonnet-*, opus-*, haiku-* 접두사
     if (/^(claude|claude-|sonnet-|opus-|haiku-)/.test(lower)) {
       return 'claude';
     }
-    // Codex/OpenAI: gpt-*, o1-*, o3-*, o4-*, codex-* 접두사
     if (/^(gpt-|o1-|o3-|o4-|codex-)/.test(lower)) {
       return 'codex';
     }
-    // Gemini: gemini-* 접두사
     if (/^gemini-/.test(lower)) {
       return 'gemini';
     }
-    // Antigravity (agy): antigravity, antigravity-*, agy, agy-* 접두사
     if (/^(antigravity|agy)(-|$)/.test(lower)) {
       return 'agy';
     }
-    // Grok: grok, grok-* 접두사
     if (/^grok(-|$)/.test(lower)) {
       return 'grok';
     }
-    // Kimi Code: 공개 alias(kimi-*) 및 CLI provider/model alias(kimi-code/*)
     if (/^kimi(?:-|\/|$)/.test(lower)) {
       return 'kimi';
     }
-    // OpenCode: opencode, opencode/*, opencode-*, opencodex/*
     if (/^(opencode|opencodex)(?:-|\/|$)/.test(lower)) {
       return 'opencode';
     }

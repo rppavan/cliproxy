@@ -3,7 +3,7 @@ import type { ExecuteOptions, ProviderConfigYaml, ProviderEvent } from '@star-cl
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 
-// ESM 환경에서 export를 직접 spy할 수 없으므로 vi.mock 팩토리로 spawn 자체를 교체.
+// Mock spawn via factory since ESM exports cannot be directly spied upon.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
@@ -38,7 +38,7 @@ function baseOptions(extra: Partial<ExecuteOptions> = {}): ExecuteOptions {
   };
 }
 
-// child_process.spawn 모킹 — 실제 agy 바이너리 호출 없이 stdout/stderr/exitCode 시뮬레이션.
+// Mock child_process.spawn to simulate stdout/stderr/exitCode without invoking the agy binary.
 function fakeChild(stdout: string, stderr = '', exitCode = 0) {
   const child = new EventEmitter() as unknown as ReturnType<typeof spawn>;
   (child as unknown as { stdout: Readable }).stdout = Readable.from([Buffer.from(stdout)]);
@@ -115,7 +115,7 @@ describe('AgyProvider.buildArgs', () => {
     expect(modelIdx).toBeGreaterThanOrEqual(0);
     expect(args[modelIdx + 1]).toBe('gemini-3.6-flash');
     expect(args[args.indexOf('--effort') + 1]).toBe('low');
-    // 모든 플래그는 -p 앞에 와야 함 (agy print-mode 파싱 규칙).
+    // All flags must precede -p according to agy print-mode parsing rules.
     expect(modelIdx).toBeLessThan(args.indexOf('-p'));
   });
 
@@ -202,7 +202,7 @@ describe('AgyProvider.buildArgs', () => {
     );
     const idx = args.indexOf('--json-schema');
     expect(idx).toBeGreaterThanOrEqual(0);
-    // OpenAI 래퍼(name/strict)가 아니라 중첩 schema만 전달해야 agy가 그대로 강제한다.
+    // Forward only nested schema without OpenAI wrapper to ensure agy enforces it properly.
     expect(JSON.parse(args[idx + 1])).toEqual(jsonSchemaFormat.json_schema.schema);
     expect(idx).toBeLessThan(args.indexOf('-p'));
   });
@@ -290,7 +290,7 @@ describe('AgyProvider.execute (JSON 결과 파싱)', () => {
   it('json_schema 요청은 오염된 response 대신 structured_output을 content로 반환', async () => {
     spawnMock.mockReturnValue(fakeChild(JSON.stringify({
       status: 'SUCCESS',
-      // 실측: response에는 프로즈와 스키마 외 필드가 섞여 유효한 JSON이 아니다.
+      // Real-world behavior: response mixes prose and auxiliary fields, resulting in invalid JSON.
       response: 'Blue\n{"answer":"Blue","toolAction":"Finish task"}\n',
       structured_output: { answer: 'Blue' },
       usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
@@ -388,8 +388,8 @@ describe('AgyProvider.executeStream (stream-json)', () => {
   });
 
   it('json_schema 요청 시 프로즈 delta를 억제하고 최종 structured_output만 emit', async () => {
-    // 실측(agy 1.1.12): 스키마를 줘도 agent_response delta는 프로즈("Blue")를 먼저 흘리고
-    // 마지막 turn에서 스키마 외 필드가 섞인 JSON을 뱉는다. 둘을 이어붙이면 유효한 JSON이 아니다.
+    // Real-world behavior: agent_response deltas emit prose first before emitting contaminated JSON.
+    // Concatenating them produces invalid JSON; therefore deltas are suppressed in favor of structured_output.
     spawnMock.mockReturnValue(fakeChild([
       JSON.stringify({
         event: 'step_update',

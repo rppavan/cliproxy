@@ -43,14 +43,12 @@ export function TrendChart() {
     );
   }
 
-  // 모델 사용량 내림차순
   const modelCounts = new Map<string, number>();
   data.byModel.forEach((d) => modelCounts.set(d.modelAlias, (modelCounts.get(d.modelAlias) ?? 0) + d.count));
   const allModels = [...modelCounts.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
   const colorMap = buildColorMap(allModels, TOP_LEGEND_LIMIT);
   const visibleModels = allModels.filter((m) => !hiddenModels.has(m));
 
-  // 시간 슬롯 생성
   const now = new Date();
   const slots = Array.from({ length: hours }, (_, i) => {
     const d = new Date(now.getTime() - (hours - 1 - i) * 3600_000);
@@ -78,17 +76,14 @@ export function TrendChart() {
     };
   });
 
-  // 모드별 최대값
   const maxValue = mode === 'tokens'
     ? Math.max(...slots.map((s) => s.tokens), 1)
     : Math.max(...slots.map((s) => s.visibleCount), 1);
 
-  // 합계 (헤더 표시용)
   const totalRequests = slots.reduce((sum, s) => sum + s.visibleCount, 0);
   const totalTokens = slots.reduce((sum, s) => sum + s.tokens, 0);
   const totalErrors = slots.reduce((sum, s) => sum + s.errorCount, 0);
 
-  // 라벨 간격
   const labelInterval = hours <= 12 ? 1 : hours <= 24 ? 2 : hours <= 72 ? 6 : 12;
   const showDateLabels = hours > 24;
 
@@ -107,7 +102,6 @@ export function TrendChart() {
 
   return (
     <div>
-      {/* 헤더: 타이틀 + 모드/기간 토글 */}
       <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <div className="flex items-center gap-3">
           <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400">{t('dashboard.requestTrend')}</h3>
@@ -137,7 +131,6 @@ export function TrendChart() {
         </div>
       </div>
 
-      {/* 통계 행 */}
       <div className="flex items-center justify-end gap-3 text-xs text-gray-400 dark:text-gray-600 mb-2">
         <span>
           <span className="text-gray-700 dark:text-gray-300 font-medium">{compactNumber(totalRequests)}</span>{' '}
@@ -159,23 +152,21 @@ export function TrendChart() {
         {hiddenModels.size > 0 && <span className="text-gray-300 dark:text-gray-700">{t('common.filtered')}</span>}
       </div>
 
-      {/* 바 차트 */}
       <div className="flex items-end gap-px" style={{ height: `${BAR_MAX_HEIGHT}px` }}>
         {slots.map((slot, idx) => {
           const value = mode === 'tokens' ? slot.tokens : slot.visibleCount;
           const totalPx = Math.round((value / maxValue) * BAR_MAX_HEIGHT);
           const errorRate = slot.totalCount > 0 ? slot.errorCount / slot.totalCount : 0;
-          const errorHeightPx = Math.min(Math.round(errorRate * BAR_MAX_HEIGHT * 0.3), totalPx); // 에러율 최대 30% 표시
+          // Cap error overlay height at 30% of chart height
+          const errorHeightPx = Math.min(Math.round(errorRate * BAR_MAX_HEIGHT * 0.3), totalPx);
 
           return (
             <div key={idx} className="flex-1 flex flex-col justify-end relative group cursor-default min-w-0">
               {value > 0 ? (
                 <div className="w-full flex flex-col justify-end" style={{ height: `${totalPx}px` }}>
                   {mode === 'tokens' ? (
-                    // 토큰 모드: 단일 막대
                     <div className="w-full bg-amber-500/70 rounded-sm" style={{ height: `${totalPx}px` }} />
                   ) : (
-                    // 요청 모드: 모델별 스택
                     slot.models.map((m, mi) => {
                       const segPx = Math.max(Math.round((m.count / slot.visibleCount) * totalPx), 1);
                       const color = colorMap.get(m.model) ?? MUTED_COLOR;
@@ -190,7 +181,6 @@ export function TrendChart() {
                       );
                     })
                   )}
-                  {/* 에러 오버레이: 상단에 빨간 점 (요청 모드에서만) */}
                   {mode === 'requests' && slot.errorCount > 0 && (
                     <div
                       className="absolute left-0 right-0 bg-red-500/80 rounded-sm pointer-events-none"
@@ -203,7 +193,6 @@ export function TrendChart() {
                 <div className="w-full bg-gray-200 dark:bg-gray-800/20 rounded-sm" style={{ height: '1px' }} />
               )}
 
-              {/* 툴팁 */}
               <div className="absolute -top-2 left-1/2 -translate-x-1/2 -translate-y-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 min-w-[120px]">
                 <div className="font-semibold mb-0.5">
                   {showDateLabels
@@ -242,7 +231,6 @@ export function TrendChart() {
         })}
       </div>
 
-      {/* 시간 라벨 */}
       <div className="flex gap-px mt-1 border-t border-gray-200 dark:border-gray-800 pt-1">
         {slots.map((slot, idx) => {
           const showLabel = idx % labelInterval === 0;
@@ -263,7 +251,6 @@ export function TrendChart() {
         })}
       </div>
 
-      {/* 모델 레전드 (요청 모드에서만) */}
       {mode === 'requests' && allModels.length > 0 && (
         <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-800/50">
           <div className="flex flex-wrap items-center gap-1.5">

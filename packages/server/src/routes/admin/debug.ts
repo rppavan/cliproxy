@@ -8,12 +8,10 @@ interface UpdateDebugBody {
 }
 
 export function registerDebugRoutes(app: FastifyInstance, debug: DebugService): void {
-  // 디버그 설정 조회
   app.get('/admin/debug', async (_request, reply) => {
     return reply.send(debug.getConfig());
   });
 
-  // 디버그 설정 변경
   app.put<{ Body: UpdateDebugBody }>('/admin/debug', async (request, reply) => {
     const { global, model, enabled } = request.body;
 
@@ -28,7 +26,6 @@ export function registerDebugRoutes(app: FastifyInstance, debug: DebugService): 
     return reply.send(debug.getConfig());
   });
 
-  // 디버그 로그 조회
   app.get<{ Querystring: { limit?: string; offset?: string; model?: string; search?: string; searchScope?: string } }>(
     '/admin/debug-logs',
     async (request, reply) => {
@@ -49,7 +46,6 @@ export function registerDebugRoutes(app: FastifyInstance, debug: DebugService): 
     },
   );
 
-  // 디버그 로그 개별 삭제
   app.delete<{ Params: { id: string } }>('/admin/debug-logs/:id', async (request, reply) => {
     const deleted = await debug.deleteLog(request.params.id);
     if (!deleted) {
@@ -58,7 +54,6 @@ export function registerDebugRoutes(app: FastifyInstance, debug: DebugService): 
     return reply.send({ success: true });
   });
 
-  // 디버그 로그 복수 삭제
   app.post<{ Body: { ids: string[] } }>('/admin/debug-logs/batch-delete', async (request, reply) => {
     const { ids } = request.body;
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -68,7 +63,6 @@ export function registerDebugRoutes(app: FastifyInstance, debug: DebugService): 
     return reply.send({ deleted });
   });
 
-  // 디버그 로그 전체 삭제
   app.delete('/admin/debug-logs', async (_request, reply) => {
     const deleted = await debug.clearLogs();
     return reply.send({ deleted });

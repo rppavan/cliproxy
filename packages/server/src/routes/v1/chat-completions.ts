@@ -34,7 +34,7 @@ interface ChatCompletionDeps {
   debug: DebugService;
 }
 
-// null byte 제거 (CLI 인젝션 방지)
+// Strip null bytes to prevent CLI argument injection.
 function sanitizeString(str: string): string {
   return str.replace(/\x00/g, '');
 }
@@ -50,8 +50,7 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
-// 텍스트 블록을 sanitize된 단일 문자열로 평탄화한다.
-// 이미지 블록을 만나면 null을 반환하여 호출자가 별도로 처리하도록 한다.
+// Flattens text blocks into a single string. Returns null for image blocks so callers handle them separately.
 function flattenTextBlock(part: unknown): string | null {
   if (typeof part === 'string') return part;
   if (!part || typeof part !== 'object') return stringifyUnknown(part);
@@ -96,12 +95,7 @@ function flattenTextBlock(part: unknown): string | null {
   return stringifyUnknown(block);
 }
 
-// 멀티모달 content를 정규화한다.
-// - string: null byte 제거 후 그대로
-// - array: 텍스트 블록은 sanitize된 { type: 'text', text } 로, 이미지 블록은 원본 보존
-//   (HTTP/OpenAI 호환 vision 모델이 image_url을 그대로 받을 수 있도록)
-// - 객체: text 블록 1개로 평탄화
-// 인접한 텍스트 블록은 머지하여 LLM이 받기 좋은 형태로 정돈한다.
+// Normalizes multimodal content into sanitized text and preserved image blocks, merging adjacent text blocks.
 function normalizeMessageContent(content: unknown): ChatMessageContent {
   if (typeof content === 'string') return sanitizeString(content);
 
@@ -145,15 +139,11 @@ function normalizeMessageContent(content: unknown): ChatMessageContent {
   return sanitizeString(stringifyUnknown(content));
 }
 
-// 백엔드(vLLM 등) 에러가 function calling(tools) 미지원 신호인지 판별.
-// 백엔드마다 문구가 달라(vLLM: "tool choice requires --enable-auto-tool-choice ...",
-// 일부: "does not support tools") 도구 키워드 + 실패 지시어 조합으로 감지.
-// 클라이언트가 표준 code(tools_not_supported)로 감지해 일반 채팅 폴백할 수 있게 한다.
+// Detects backend errors (e.g. vLLM) indicating tool calling is unsupported, enabling clients to fall back.
 export function isToolsUnsupportedError(message: string): boolean {
   const t = (message || '').toLowerCase();
   const mentionsTools = /tool[_ -]?call|tool[_ -]?choice|tool[_ -]?parser|tool[_ -]?use|enable-auto-tool-choice|function[_ ]?call|\btools?\b/.test(t);
-  // "invalid tool schema/arguments"는 provider가 tools 자체를 지원하지 않는다는
-  // 뜻이 아니므로 generic invalid는 포함하지 않는다.
+  // Excludes generic schema/argument errors since they indicate client input issues, not missing provider tool support.
   const failure = /not\s+support|unsupport|requires|must be set|to be set|no .*parser|not enabled|disabled/.test(t);
   return mentionsTools && failure;
 }
@@ -164,19 +154,17 @@ export function isInvalidToolSchemaError(message: string): boolean {
     && /(컴파일할 수 없|compile|schema is invalid|invalid schema)/.test(t);
 }
 
-// CLI 에러 메시지에서 내부 정보 제거 (파일 경로, 스택 트레이스 등)
-// 클라이언트에 노출되는 에러 응답에만 적용 — 내부 로그는 원본 유지
+// Strips file paths and stack frames from error messages returned to clients.
 function sanitizeProviderError(message: string): string {
   return message
-    .replace(/\/[\w/.@-]+/g, '[path]')        // 파일/디렉토리 경로 마스킹
-    .replace(/at\s+\S+\s*\(.*?\)/g, '')       // 스택 트레이스 제거
+    .replace(/\/[\w/.@-]+/g, '[path]')
+    .replace(/at\s+\S+\s*\(.*?\)/g, '')
     .trim()
-    .substring(0, 200);                        // 길이 제한
+    .substring(0, 200);
 }
 
 /**
- * 클라이언트 연결 끊김 시 write 에러로 프로세스 크래시 방지
- * destroyed/writableEnded 체크 후 try-catch로 감싸 false 반환
+ * Guards against unhandled write errors when a client disconnects prematurely.
  */
 function safeWrite(raw: NodeJS.WritableStream, data: string): boolean {
   try {
@@ -187,9 +175,7 @@ function safeWrite(raw: NodeJS.WritableStream, data: string): boolean {
   }
 }
 
-// response_format(structured output) 형태 검증.
-// 잘못된 형태를 프로바이더까지 내려보내면 CLI 인수/백엔드 단계에서 원인 파악이 어려운
-// 에러가 되므로 라우트에서 400으로 잘라낸다. 반환값은 에러 메시지 (유효하면 null).
+// Validates response_format upfront so malformed schemas fail with 400 before reaching provider CLI/backend.
 export function validateResponseFormat(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return 'response_format must be an object.';
@@ -236,44 +222,35 @@ export function registerChatCompletionsRoute(
       const requestId = createRequestId();
       const body = request.body;
 
-      // === 입력 검증 ===
-
-      // 기본 필드 존재 확인
       if (!body.model || !body.messages?.length) {
         return reply.status(400).send(makeValidationError('model and messages are required.'));
       }
 
-      // messages가 배열인지 확인
       if (!Array.isArray(body.messages)) {
         return reply.status(400).send(makeValidationError('messages must be an array.', 'messages'));
       }
 
-      // 메시지 수 제한
       if (body.messages.length > v.maxMessageCount) {
         return reply.status(400).send(makeValidationError(`Too many messages: ${body.messages.length}. Maximum is ${v.maxMessageCount}.`, 'messages'));
       }
 
-      // 메시지별 검증
       let totalPromptLength = 0;
       for (let i = 0; i < body.messages.length; i++) {
         const msg = body.messages[i];
 
-        // role 화이트리스트 검증
         if (!ALLOWED_ROLES.includes(msg.role as typeof ALLOWED_ROLES[number])) {
           return reply.status(400).send(makeValidationError(`Invalid role "${msg.role}" at messages[${i}]. Allowed: ${ALLOWED_ROLES.join(', ')}`, 'messages'));
         }
 
-        // developer → system 정규화 (OpenAI API 호환)
         if (msg.role === 'developer') {
           msg.role = 'system';
         }
 
-        // content를 정규화 (OpenAI content parts + 구조화 블록 허용)
-        // 멀티모달 array는 array 형태 그대로 보존 — HTTP provider가 vision 모델로 그대로 패스스루
+        // Preserve multimodal arrays for pass-through to vision-capable providers.
         const normalizedContent = normalizeMessageContent(msg.content);
         msg.content = normalizedContent;
 
-        // 길이 제한은 텍스트 부분만으로 측정 (base64 image data는 제외 — bodyLimitBytes로 별도 제한)
+        // Enforce maxMessageLength only on extracted text; base64 image payloads are governed by bodyLimitBytes.
         const textLength = extractTextFromContent(normalizedContent).length;
         if (textLength > v.maxMessageLength) {
           return reply.status(400).send(makeValidationError(`messages[${i}].content too long: ${textLength} chars. Maximum is ${v.maxMessageLength}.`, 'messages'));
@@ -282,15 +259,12 @@ export function registerChatCompletionsRoute(
         totalPromptLength += textLength;
       }
 
-      // 전체 프롬프트 총 길이 제한
       if (totalPromptLength > v.maxPromptLength) {
         return reply.status(400).send(makeValidationError(`Total prompt length too long: ${totalPromptLength} chars. Maximum is ${v.maxPromptLength}.`, 'messages'));
       }
 
-      // model명 sanitize
       body.model = sanitizeString(body.model);
 
-      // structured output 요청 형태 검증 (프로바이더 지원 여부는 라우팅 후 판단)
       if (body.response_format != null) {
         const formatError = validateResponseFormat(body.response_format);
         if (formatError) {
@@ -305,15 +279,12 @@ export function registerChatCompletionsRoute(
         }
       }
 
-      // ADD-06: CLI에서 지원하지 않는 파라미터 감지
       const unsupportedParams: string[] = [];
       if (body.temperature != null) unsupportedParams.push('temperature');
       if (body.max_tokens != null) unsupportedParams.push('max_tokens');
       if ((body as unknown as Record<string, unknown>).top_p != null) unsupportedParams.push('top_p');
       if ((body as unknown as Record<string, unknown>).frequency_penalty != null) unsupportedParams.push('frequency_penalty');
       if ((body as unknown as Record<string, unknown>).presence_penalty != null) unsupportedParams.push('presence_penalty');
-
-      // === 라우팅 ===
 
       const routes = await deps.router.resolve(body.model);
       if (routes.length === 0) {
@@ -327,7 +298,7 @@ export function registerChatCompletionsRoute(
         });
       }
 
-      // 요청 body의 reasoning_effort가 있으면 화이트리스트 검증 후 model_mapping 값보다 우선 적용
+      // Overrides model mapping when reasoning_effort is explicitly specified in the request body.
       let bodyReasoningEffort: ReasoningEffort | undefined;
       if (body.reasoning_effort != null) {
         const normalized = typeof body.reasoning_effort === 'string'
@@ -346,11 +317,9 @@ export function registerChatCompletionsRoute(
         bodyReasoningEffort = normalized;
       }
 
-      // 스키마 준수 JSON은 reasoning 마커 분리 대상에서 제외한다 — 값 안에 마커와 같은
-      // 문자열이 들어 있으면 splitter가 잘라내 유효하지 않은 JSON이 되기 때문.
+      // Do not split reasoning markers out of structured JSON outputs, where markers inside string values would corrupt JSON.
       const structuredRequested = body.response_format?.type === 'json_schema';
 
-      // include_reasoning: body > mapping > 전역 default(false). undefined는 폴백.
       const bodyIncludeReasoning: boolean | undefined = typeof body.include_reasoning === 'boolean'
         ? body.include_reasoning
         : undefined;
@@ -359,10 +328,7 @@ export function registerChatCompletionsRoute(
       const keyLimits = (request as unknown as { apiKeyRateLimits?: { rpm?: number | null; rpd?: number | null } }).apiKeyRateLimits;
       const clientKey = extractClientKey(request, apiKeyId);
 
-      // === 캐시 조회 (non-streaming만) ===
-      // tool call에는 매 요청마다 새 call ID가 필요하고 tools/tool_choice도 기존 캐시 키에
-      // 포함되지 않으므로 캐시하지 않는다. response_format도 캐시 키 밖이라, 캐시했다면
-      // 스키마 없는 응답과 스키마 준수 응답이 서로 섞여 반환된다. 일반 텍스트 요청의 기존 캐시 동작은 유지한다.
+      // Bypass cache for tool calls (requires unique call IDs) and response_format (schema not included in cache key).
       const requestHash = !body.stream
         && !(body.tools && body.tools.length > 0)
         && !body.response_format
@@ -372,7 +338,6 @@ export function registerChatCompletionsRoute(
       if (!body.stream && requestHash) {
         const cached = await deps.cache.get(requestHash);
         if (cached) {
-          // 캐시 히트: provider 호출 건너뜀
           const cachedBody = JSON.parse(cached.responseBody) as ChatCompletionResponse;
 
           reply.header('X-Cache', 'HIT');
@@ -399,7 +364,7 @@ export function registerChatCompletionsRoute(
         }
       }
 
-      // === 레이트 리밋: 글로벌/키 단위는 요청당 1회만 차감 (폴백 루프 진입 전) ===
+      // Consume global/key rate limit quota once per request before attempting provider fallbacks.
       const gkResult = deps.rateLimiter.checkGlobalAndKey(apiKeyId ?? 'anonymous', keyLimits);
       if (!gkResult.allowed) {
         reply.header('Retry-After', String(gkResult.retryAfterSeconds ?? 30));
@@ -413,10 +378,7 @@ export function registerChatCompletionsRoute(
         });
       }
 
-      // === 폴백 루프 ===
-
       let lastError: Error | null = null;
-      // 프로바이더 단위 한도로 폴백된 경우의 retry-after (모든 프로바이더 소진 시 429 반환에 사용)
       let rateLimitRetryAfter: number | null = null;
 
       for (const route of routes) {
@@ -426,7 +388,6 @@ export function registerChatCompletionsRoute(
           continue;
         }
 
-        // 프로바이더 단위 한도는 시도하는 프로바이더별로 차감. 초과 시 다음 프로바이더로 폴백.
         const provRate = deps.rateLimiter.checkProvider(route.provider);
         if (!provRate.allowed) {
           rateLimitRetryAfter = provRate.retryAfterSeconds ?? 30;
@@ -440,14 +401,13 @@ export function registerChatCompletionsRoute(
           continue;
         }
 
-        // structured output을 강제하지 못하는 프로바이더로 라우팅됐으면 요청은 그대로 진행하되
-        // 헤더로 알린다 (temperature/max_tokens와 같은 처리). 폴백 대상마다 달라지므로 루프 안에서 계산.
+        // If routed to a provider unable to enforce structured outputs, proceed with the request
+        // but notify client via header (computed per fallback route).
         const routeUnsupportedParams = body.response_format
           && !provider.supportsResponseFormat(body.response_format)
           ? [...unsupportedParams, 'response_format']
           : unsupportedParams;
 
-        // 활성 요청 추적 시작
         deps.activeRequests.start({
           requestId,
           modelAlias: body.model,
@@ -458,7 +418,6 @@ export function registerChatCompletionsRoute(
           startedAt: startTime,
         });
 
-        // 디버그 캡처
         const debugEnabled = deps.debug.isEnabled(body.model);
         let debugCapture: DebugCaptureInfo | undefined;
         let debugLogId: string | undefined;
@@ -466,7 +425,6 @@ export function registerChatCompletionsRoute(
           ? (info: DebugCaptureInfo) => { debugCapture = info; }
           : undefined;
 
-        // 요청 시작 시 즉시 디버그 로그 INSERT
         if (debugEnabled) {
           debugLogId = await deps.debug.logStart({
             requestId,
@@ -481,21 +439,16 @@ export function registerChatCompletionsRoute(
 
         try {
           if (body.stream) {
-            // 클라이언트 연결 끊김 감지용 AbortController (큐 외부에서 생성하여 대기 중에도 감지)
             const abortController = new AbortController();
-            // 이른 스트리밍 실패로 폴백할 때 close 리스너가 누적되지 않도록 named handler로 등록하고
-            // 스트리밍 종료(성공/에러/예외) 시 finally에서 반드시 제거한다.
+            // Use named handler to prevent listener leak across fallbacks; remove in finally.
             const onClientClose = () => abortController.abort();
             request.raw.once('close', onClientClose);
 
             try {
-            // 스트리밍도 큐를 통해 동시성 제한 적용 (BUG-01 수정)
             await deps.queue.enqueue(route.provider, async () => {
-            // 큐 대기 중 클라이언트가 이미 연결을 끊었으면 조기 종료
             if (abortController.signal.aborted) return;
 
-            // 스트리밍 응답
-            // reply.raw 직접 쓰기 시 Fastify CORS 미들웨어가 우회되므로 수동 추가
+            // Manually apply CORS headers since writing directly to reply.raw bypasses Fastify CORS middleware.
             const origin = request.headers.origin;
             reply.raw.writeHead(200, {
               'Content-Type': 'text/event-stream',
@@ -507,14 +460,12 @@ export function registerChatCompletionsRoute(
               ...(routeUnsupportedParams.length > 0 ? { 'X-Unsupported-Params': routeUnsupportedParams.join(',') } : {}),
             });
 
-            // 스트림 단위 include_reasoning 결정 (body > mapping > false)
             const streamIncludeReasoning = bodyIncludeReasoning ?? (route.includeReasoning ?? false);
             const sseOptions = { includeReasoning: streamIncludeReasoning };
-            // 사용자가 추론 노출 정책을 명시적으로 설정한 경우(true/false 모두)에만 splitter 활성.
-            // 비추론 모델에 잘못 적용해서 답변이 reasoning 박스로 가는 사고 방지 — null/상속이면 통과.
+            // Only activate splitter when reasoning policy is explicit, preventing non-reasoning model outputs
+            // from accidentally misclassifying content into thinking blocks.
             const reasoningExplicit = bodyIncludeReasoning !== undefined
               || (route.includeReasoning !== null && route.includeReasoning !== undefined);
-            // splitter는 백엔드가 reasoning을 별도 필드로 분리하지 않고 content에 마커와 함께 보내는 경우를 위함.
             const streamSplitter = reasoningExplicit && !structuredRequested ? new ReasoningSplitter() : null;
 
             const roleChunk = formatAsSSE(
@@ -527,7 +478,6 @@ export function registerChatCompletionsRoute(
 
             let totalContent = '';
             let ttfbMs: number | undefined;
-            // usage 이벤트에서 실제 토큰 사용량 캡처
             let streamUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
 
             const streamIterator = provider.executeStream({
@@ -547,8 +497,6 @@ export function registerChatCompletionsRoute(
               chatResponseFormat: body.response_format,
             });
 
-            // text_delta 안의 마커를 splitter로 잘라서 thinking/text_delta로 재분배하는 헬퍼.
-            // splitter가 비활성이거나 일반 이벤트면 원본 그대로 emit.
             const emitTextDelta = (text: string): boolean => {
               if (!streamSplitter || !text) {
                 const sse = formatAsSSE({ type: 'text_delta', text }, requestId, body.model, sseOptions);
@@ -575,8 +523,6 @@ export function registerChatCompletionsRoute(
                   ttfbMs = Date.now() - startTime;
                 }
 
-                // text_delta는 splitter 통과 (활성 시 마커로 reasoning 추출).
-                // 그 외 이벤트(thinking/usage/tool_use/done)는 원본 그대로 formatAsSSE.
                 if (event.type === 'text_delta') {
                   if (!emitTextDelta(event.text)) break;
                 } else {
@@ -589,7 +535,6 @@ export function registerChatCompletionsRoute(
                   }
                 }
 
-                // 응답 크기 제한
                 if (totalContent.length > v.maxResponseLength) {
                   const doneSSE = formatAsSSE({ type: 'done' as const }, requestId, body.model, sseOptions);
                   if (doneSSE) safeWrite(reply.raw, doneSSE);
@@ -598,7 +543,7 @@ export function registerChatCompletionsRoute(
                 if (event.type === 'done') break;
               }
 
-              // splitter 잔여 버퍼 flush (응답 끝에 padding이 남았을 수 있음).
+              // Flush any remaining buffered tokens in the splitter at stream end.
               if (streamSplitter) {
                 const tail = streamSplitter.flush();
                 if (tail.reasoning) {
@@ -612,7 +557,7 @@ export function registerChatCompletionsRoute(
                 }
               }
             } catch (streamErr) {
-              // 헤더 전송 후 에러: 스트림 에러 이벤트 전송 후 종료 (폴백 불가)
+              // After headers are committed, emit SSE error and terminate; fallback is no longer possible.
               const errMsg = streamErr instanceof Error ? streamErr.message : 'Stream interrupted';
               safeWrite(reply.raw, `data: ${JSON.stringify({ error: { message: errMsg } })}\n\n`);
               safeWrite(reply.raw, 'data: [DONE]\n\n');
@@ -649,7 +594,6 @@ export function registerChatCompletionsRoute(
               reasoningEffort: bodyReasoningEffort ?? route.reasoningEffort,
               status: 'success',
               statusCode: 200,
-              // ADD-05: 실제 토큰 수 사용 (없으면 completionTokens만 추정)
               promptTokens: streamUsage?.promptTokens ?? 0,
               completionTokens: streamUsage?.completionTokens ?? Math.ceil(totalContent.length / 4),
               totalTokens: streamUsage?.totalTokens ?? Math.ceil(totalContent.length / 4),
@@ -675,7 +619,7 @@ export function registerChatCompletionsRoute(
             }
 
             deps.activeRequests.finish(requestId);
-            }); // queue.enqueue 끝
+            });
 
             return;
             } finally {
@@ -683,7 +627,6 @@ export function registerChatCompletionsRoute(
             }
           }
 
-          // Non-streaming 응답
           const result = await deps.queue.enqueue(
             route.provider,
             () => provider.execute({
@@ -703,7 +646,7 @@ export function registerChatCompletionsRoute(
             }),
           );
 
-          // 추론 본문 분리: provider가 reasoning을 분리해 보냈으면 그대로, 아니면 content 안의 마커로 split.
+          // Split reasoning markers out of content when the provider does not supply a separate reasoning field.
           let content = result.content;
           let reasoning = result.reasoning ?? '';
           if (!reasoning && !structuredRequested) {
@@ -713,12 +656,10 @@ export function registerChatCompletionsRoute(
               content = split.content;
             }
           }
-          // 응답 크기 제한 (content만 — reasoning은 별도)
           if (content.length > v.maxResponseLength) {
             content = content.substring(0, v.maxResponseLength);
           }
 
-          // include_reasoning 우선순위 결정: body > mapping > 기본값(false).
           const effectiveInclude = bodyIncludeReasoning ?? (route.includeReasoning ?? false);
           const hasToolCalls = !!result.toolCalls && result.toolCalls.length > 0;
           const assistantMessage: ChatCompletionResponse['choices'][0]['message'] = {
@@ -728,7 +669,7 @@ export function registerChatCompletionsRoute(
             ...(effectiveInclude && reasoning ? { reasoning_content: reasoning } : {}),
           };
 
-          // tool_calls가 있으면 finish_reason을 'tool_calls'로 정규화 (일부 백엔드가 'stop' 반환).
+          // Normalize finish_reason to 'tool_calls' when calls exist (some backends return 'stop').
           const finishReason: ChatCompletionResponse['choices'][0]['finish_reason'] = hasToolCalls
             ? 'tool_calls'
             : result.finishReason === 'error' ? 'stop' : result.finishReason;
@@ -758,12 +699,11 @@ export function registerChatCompletionsRoute(
           if (routeUnsupportedParams.length > 0) {
             reply.header('X-Unsupported-Params', routeUnsupportedParams.join(','));
           }
-          // codex CLI 세션 재사용 시 thread_id 노출 (참고용). 자동 재사용은 X-Cliproxy-Session-Id 기반.
+          // Expose thread_id for client reference when reusing Codex sessions via X-Cliproxy-Session-Id.
           if (result.meta?.threadId) {
             reply.header('X-Cliproxy-Thread-Id', result.meta.threadId);
           }
 
-          // 캐시에 응답 저장
           if (requestHash) {
             await deps.cache.set(
               requestHash,
@@ -853,7 +793,7 @@ export function registerChatCompletionsRoute(
         }
       }
 
-      // 모든 provider가 프로바이더 단위 한도로 소진되었으면 502 대신 429 반환.
+      // Return 429 instead of 502 when all candidate providers were exhausted by provider rate limits.
       if (rateLimitRetryAfter !== null) {
         reply.header('Retry-After', String(rateLimitRetryAfter));
         return reply.status(429).send({
@@ -866,8 +806,7 @@ export function registerChatCompletionsRoute(
         });
       }
 
-      // Tool Bridge가 요청에 포함된 함수 schema를 컴파일하지 못한 경우는
-      // provider 장애가 아니라 클라이언트 요청 오류다.
+      // Schema compilation failures in Tool Bridge are client input errors, not provider failures.
       if (body.tools && body.tools.length > 0 && lastError && isInvalidToolSchemaError(lastError.message)) {
         return reply.status(400).send({
           error: {
@@ -879,8 +818,7 @@ export function registerChatCompletionsRoute(
         });
       }
 
-      // 모든 provider 실패 + 마지막 에러가 도구 미지원이면 502 대신 400 + tools_not_supported.
-      // 클라이언트가 안정적으로 감지해 tools 없이 일반 채팅으로 폴백할 수 있게 한다.
+      // Return 400 with tools_not_supported so clients can cleanly fall back to regular chat without tools.
       if (body.tools && body.tools.length > 0 && lastError && isToolsUnsupportedError(lastError.message)) {
         return reply.status(400).send({
           error: {
@@ -893,7 +831,6 @@ export function registerChatCompletionsRoute(
         });
       }
 
-      // ADD-03: 타임아웃 여부에 따라 504/502 구분
       const isTimeout = lastError?.message.includes('timed out') ?? false;
       const statusCode = isTimeout ? 504 : 502;
 

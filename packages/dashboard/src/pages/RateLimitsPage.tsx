@@ -17,11 +17,11 @@ export default function RateLimitsPage() {
 
   useEffect(load, []);
 
-  // 프로바이더 목록 동적 로드 (플러그인 포함)
+  // Query provider list dynamically so any registered plugins appear in the rate limit controls.
   useEffect(() => {
     fetchProviders()
       .then((providers) => setProviderNames(providers.map((p) => p.name)))
-      .catch(() => { /* 실패 시 기본값 유지 */ });
+      .catch(() => { /* keep defaults on failure */ });
   }, []);
 
   const handleSave = async () => {
@@ -68,7 +68,6 @@ export default function RateLimitsPage() {
         {t('rateLimits.description')}
       </p>
 
-      {/* 메시지 */}
       {message && (
         <div className={`px-4 py-3 rounded-lg border text-sm ${
           message.type === 'success'
@@ -79,7 +78,6 @@ export default function RateLimitsPage() {
         </div>
       )}
 
-      {/* 전역 한도 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 space-y-4">
         <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">{t('rateLimits.globalLimits')}</h3>
         <p className="text-xs text-gray-400 dark:text-gray-500">{t('rateLimits.globalDescription')}</p>
@@ -107,7 +105,6 @@ export default function RateLimitsPage() {
         </div>
       </div>
 
-      {/* 프로바이더별 한도 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 space-y-4">
         <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">{t('rateLimits.perProvider')}</h3>
         <p className="text-xs text-gray-400 dark:text-gray-500">{t('rateLimits.perProviderDescription')}</p>
@@ -132,7 +129,6 @@ export default function RateLimitsPage() {
         </div>
       </div>
 
-      {/* 키별 안내 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 space-y-2">
         <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">{t('rateLimits.perKey')}</h3>
         <p className="text-xs text-gray-400 dark:text-gray-500">
@@ -142,7 +138,6 @@ export default function RateLimitsPage() {
         </p>
       </div>
 
-      {/* 한도 계층 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 space-y-3">
         <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">{t('rateLimits.hierarchy')}</h3>
         <div className="text-sm text-gray-500 dark:text-gray-400 space-y-1">
@@ -165,7 +160,6 @@ export default function RateLimitsPage() {
         <p className="text-xs text-gray-400 dark:text-gray-600">{t('rateLimits.hierarchyNote')}</p>
       </div>
 
-      {/* 저장 */}
       <div className="flex gap-3">
         <button
           onClick={handleSave}

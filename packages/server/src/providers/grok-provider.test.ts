@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 
-// ESM 환경에서 export를 직접 spy할 수 없으므로 vi.mock 팩토리로 spawn 자체를 교체.
+// Mock spawn via factory since ESM exports cannot be directly spied upon.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
@@ -57,7 +57,7 @@ function grokJson(
   });
 }
 
-// child_process.spawn 모킹 — 실제 grok 바이너리 호출 없이 stdout/stderr/exitCode 시뮬레이션.
+// Mock child_process.spawn to simulate stdout/stderr/exitCode without invoking the grok binary.
 function fakeChild(stdout: string, stderr = '', exitCode = 0) {
   const child = new EventEmitter() as unknown as ReturnType<typeof spawn>;
   (child as unknown as { stdout: Readable }).stdout = Readable.from([Buffer.from(stdout)]);
@@ -384,7 +384,7 @@ describe('GrokProvider - structured output (response_format)', () => {
   });
 
   it('스트리밍은 delta를 억제하고 구조화 값 1회만 emit', async () => {
-    // 실측(grok 1.0.3): delta가 JSON 조각으로 오지만 CLI마다 동작이 갈리므로 통일해 버퍼링한다.
+    // Buffer stream chunks to unify behavior across CLI versions that emit partial JSON deltas.
     spawnMock.mockReturnValue(fakeChild(JSON.stringify({
       text: '{"answer": "blue"}',
       stopReason: 'EndTurn',

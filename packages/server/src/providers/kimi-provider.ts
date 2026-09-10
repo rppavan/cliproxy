@@ -10,8 +10,7 @@ import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-// Kimi Code는 prompt-file/stdin 입력을 제공하지 않으므로 macOS ARG_MAX(1MB)에
-// 여유를 둔 상한을 적용한다.
+// Kimi Code does not support stdin or prompt-file input; bound to 800KB to respect macOS ARG_MAX (1MB).
 const MAX_PROMPT_ARG_BYTES = 800_000;
 
 interface KimiStreamRecord {
@@ -73,7 +72,7 @@ function parseRecord(line: string): KimiStreamRecord | undefined {
       ? parsed as KimiStreamRecord
       : undefined;
   } catch {
-    // 업데이트 안내나 진단 문구가 JSON 앞뒤에 섞여도 구조화된 레코드만 사용한다.
+    // Ignore update notices or diagnostic text mixed around JSON records.
     return undefined;
   }
 }
@@ -85,14 +84,14 @@ function assistantContent(record: KimiStreamRecord | undefined): string | undefi
 }
 
 /**
- * Moonshot AI Kimi Code CLI provider — @moonshot-ai/kimi-code 0.29.1 기준.
+ * Moonshot AI Kimi Code CLI provider.
  *
- * - `kimi -m <alias> --output-format stream-json -p <prompt>` 헤드리스 실행.
- * - stream-json은 assistant/tool/meta NDJSON이며 assistant content만 API 응답으로 노출한다.
- *   CLI 내부 도구 호출은 Kimi가 이미 실행하므로 OpenAI function call로 재노출하지 않는다.
- * - CLI 출력에 token usage가 없어 prompt/completion UTF-8 바이트 기준 추정치를 반환한다.
- * - K3/K3-256k의 reasoning_effort는 KIMI_MODEL_THINKING_EFFORT(low/high/max)로 전달한다.
- * - 프록시 요청 중 CLI 자체 업데이트가 실행되지 않도록 KIMI_CODE_NO_AUTO_UPDATE=1을 강제한다.
+ * - Runs headlessly via `kimi -m <alias> --output-format stream-json -p <prompt>`.
+ * - stream-json emits assistant/tool/meta NDJSON; exposes only assistant content to API responses.
+ *   Internal CLI tool executions are handled directly by Kimi and are not exposed as function calls.
+ * - CLI output lacks token usage metadata; returns byte-based estimates instead.
+ * - Forwards reasoning_effort for K3/K3-256k models via KIMI_MODEL_THINKING_EFFORT (low/high/max).
+ * - Enforces KIMI_CODE_NO_AUTO_UPDATE=1 to prevent automatic updates during proxy requests.
  */
 export class KimiProvider extends BaseProvider {
   readonly name = 'kimi' as const;
@@ -120,7 +119,7 @@ export class KimiProvider extends BaseProvider {
       );
     }
 
-    // 출력 형식과 prompt는 파서/요청의 계약이므로 사용자 extra_args보다 provider가 우선한다.
+    // Output format and prompt contract take precedence over user extra_args.
     const extraArgs = withoutValueFlag(
       this.config.extra_args,
       ['--output-format', '-p', '--prompt'],

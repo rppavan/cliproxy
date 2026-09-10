@@ -34,7 +34,6 @@ import {
   restartChannelBridge,
 } from '../api/client';
 
-// HTTP 엔드포인트 타입 옵션 (셀렉트 표시용)
 const ENDPOINT_TYPE_OPTIONS: EndpointType[] = ['chat', 'embeddings', 'rerank', 'images', 'tts'];
 
 interface ProviderState {
@@ -43,7 +42,6 @@ interface ProviderState {
   loading: boolean;
 }
 
-// 커스텀 프로바이더 폼 기본값 (Ollama 예시)
 const DEFAULT_GENERIC_CONFIG: Omit<GenericCliProviderConfig, 'enabled'> & { enabled: boolean } = {
   enabled: true,
   cli_path: 'ollama',
@@ -58,10 +56,8 @@ const DEFAULT_GENERIC_CONFIG: Omit<GenericCliProviderConfig, 'enabled'> & { enab
   display_name: '',
 };
 
-// Generic 프로바이더 이름인지 (DB에서 로드된 커스텀)
 const genericProviderNames = new Set<string>();
 
-// HTTP 프로바이더 폼 기본값
 const DEFAULT_HTTP_CONFIG: Partial<HttpProviderConfig> = {
   enabled: true,
   base_url: 'http://localhost:8080/v1',
@@ -90,17 +86,14 @@ export default function ProvidersPage() {
   const [addError, setAddError] = useState<string | null>(null);
   const [addSaving, setAddSaving] = useState(false);
 
-  // HTTP 프로바이더 상태
   const [httpProviders, setHttpProviders] = useState<HttpProviderInfo[]>([]);
   const [showAddHttpForm, setShowAddHttpForm] = useState(false);
   const [httpDraft, setHttpDraft] = useState<{ name: string } & Partial<HttpProviderConfig>>({ name: '', ...DEFAULT_HTTP_CONFIG });
   const [httpError, setHttpError] = useState<string | null>(null);
   const [httpSaving, setHttpSaving] = useState(false);
 
-  // 프로바이더 목록 + 설정 로드
   const loadAll = async () => {
     try {
-      // Generic/HTTP 프로바이더 이름 목록도 로드
       const [infos, generics, https] = await Promise.all([
         fetchProviders(),
         fetchGenericProviders().catch(() => []),
@@ -120,7 +113,6 @@ export default function ProvidersPage() {
       setProviders(states);
       setError(null);
 
-      // 각 프로바이더 설정 병렬 로드
       const configs = await Promise.allSettled(
         infos.map((info) => fetchProviderConfig(info.name)),
       );
@@ -139,7 +131,6 @@ export default function ProvidersPage() {
 
   useEffect(() => { loadAll(); }, []);
 
-  // 카드 확장/축소
   const toggleExpand = (name: string) => {
     if (expandedProvider === name) {
       setExpandedProvider(null);
@@ -160,7 +151,6 @@ export default function ProvidersPage() {
     setMessage(null);
   };
 
-  // 설정 저장
   const handleSave = async (name: string) => {
     setSaving(true);
     setMessage(null);
@@ -194,10 +184,8 @@ export default function ProvidersPage() {
               disableNativeTools: payload.disableNativeTools,
             }
           : payload;
-      // enabled는 boolean으로 전달
       const result = await updateProviderConfig(name, safePayload);
 
-      // 로컬 상태 갱신
       setProviders((prev) =>
         prev.map((p) =>
           p.info.name === name ? { ...p, config: result } : p,
@@ -213,7 +201,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // 프로바이더 테스트
   const handleTest = async (name: string) => {
     setTesting(name);
     setTestResult(null);
@@ -231,7 +218,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // 프로바이더 활성/비활성 토글
   const handleToggleEnabled = async (name: string, currentEnabled: boolean) => {
     try {
       const result = await updateProviderConfig(name, { enabled: !currentEnabled });
@@ -248,7 +234,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // 커스텀 프로바이더 추가
   const handleAddProvider = async () => {
     setAddSaving(true);
     setAddError(null);
@@ -271,7 +256,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // 커스텀 프로바이더 삭제
   const handleDeleteProvider = async (name: string) => {
     if (!confirm(t('providers.confirmDelete').replace('{name}', name))) return;
     try {
@@ -283,7 +267,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // 커스텀 프로바이더 설정 저장 (Generic API 경유)
   const handleSaveGeneric = async (name: string) => {
     setSaving(true);
     setMessage(null);
@@ -302,7 +285,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // HTTP 프로바이더 추가
   const handleAddHttpProvider = async () => {
     setHttpSaving(true);
     setHttpError(null);
@@ -318,7 +300,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // HTTP 프로바이더 삭제
   const handleDeleteHttpProvider = async (name: string) => {
     if (!confirm(t('providers.confirmDelete').replace('{name}', name))) return;
     try {
@@ -330,7 +311,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // HTTP 프로바이더 설정 저장
   const handleSaveHttp = async (name: string) => {
     setSaving(true);
     setMessage(null);
@@ -346,7 +326,6 @@ export default function ProvidersPage() {
     }
   };
 
-  // 드래프트 필드 업데이트 헬퍼
   const updateDraft = (field: keyof ProviderConfig, value: string | number | boolean) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
     setMessage(null);
@@ -378,7 +357,6 @@ export default function ProvidersPage() {
         </button>
       </div>
 
-      {/* 프로바이더 카드 목록 */}
       {(() => {
         const builtinProviders = providers.filter((p) => p.info.kind === 'builtin');
         const toolBridgeProviders = providers.filter((p) => p.info.kind === 'tool-bridge');
@@ -410,7 +388,6 @@ export default function ProvidersPage() {
                     : 'border-gray-200 dark:border-gray-800'
               } ${!isEnabled ? 'opacity-60' : ''}`}
             >
-              {/* 카드 헤더 */}
               <div
                 className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
                 onClick={() => toggleExpand(info.name)}
@@ -440,7 +417,6 @@ export default function ProvidersPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  {/* 활성/비활성 토글 */}
                   {config && (
                     <div onClick={(e) => e.stopPropagation()}>
                       <ToggleSwitch
@@ -470,10 +446,8 @@ export default function ProvidersPage() {
                 </div>
               </div>
 
-              {/* 확장된 설정 편집 폼 */}
               {isExpanded && config && (
                 <div className="border-t border-gray-200 dark:border-gray-800 px-5 py-4 space-y-4">
-                  {/* Generic 프로바이더 안내 */}
                   {genericProviderNames.has(info.name) && (
                     <div className="px-4 py-3 rounded-lg border bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20 text-blue-700 dark:text-blue-300 text-xs space-y-1">
                       <p className="font-medium">{t('providers.editGuideTitle')}</p>
@@ -492,7 +466,6 @@ export default function ProvidersPage() {
                     </div>
                   )}
 
-                  {/* 메시지 */}
                   {message && (
                     <div
                       className={`px-4 py-3 rounded-lg border text-sm ${
@@ -505,7 +478,6 @@ export default function ProvidersPage() {
                     </div>
                   )}
 
-                  {/* 설정 필드 */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1.5">
@@ -664,22 +636,18 @@ export default function ProvidersPage() {
                     />
                   </div>
 
-                  {/* Claude 프로바이더 전용: SDK 모드 설정 */}
                   {info.name === 'claude' && (
                     <ClaudeSdkSettings draft={draft} setDraft={setDraft} setMessage={setMessage} t={t} />
                   )}
 
-                  {/* Codex 프로바이더 전용: App Server 모드 설정 */}
                   {info.name === 'codex' && (
                     <CodexAppServerSettings draft={draft} setDraft={setDraft} setMessage={setMessage} t={t} />
                   )}
 
-                  {/* Generic 프로바이더 전용 필드 */}
                   {genericProviderNames.has(info.name) && (
                     <GenericFieldsEditor draft={draft} updateDraft={updateDraft} t={t} />
                   )}
 
-                  {/* 테스트 결과 */}
                   {testResult && (
                     <div
                       className={`px-4 py-3 rounded-lg border text-sm space-y-1 ${
@@ -712,7 +680,6 @@ export default function ProvidersPage() {
                     </div>
                   )}
 
-                  {/* 버튼 */}
                   <div className="flex gap-3 pt-2">
                     <button
                       onClick={() => genericProviderNames.has(info.name) ? handleSaveGeneric(info.name) : handleSave(info.name)}
@@ -751,7 +718,6 @@ export default function ProvidersPage() {
 
         return (
           <div className="space-y-6">
-            {/* 빌트인 프로바이더 */}
             {builtinProviders.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
@@ -764,7 +730,6 @@ export default function ProvidersPage() {
               </div>
             )}
 
-            {/* Tool Bridge 프로바이더 */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-semibold text-teal-700 dark:text-teal-300 uppercase tracking-wider">
@@ -783,7 +748,6 @@ export default function ProvidersPage() {
               )}
             </div>
 
-            {/* 커스텀/플러그인 프로바이더 */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -798,7 +762,6 @@ export default function ProvidersPage() {
                 </button>
               </div>
 
-              {/* 추가 폼 */}
               {showAddForm && (
                 <AddProviderForm
                   draft={addDraft}
@@ -824,7 +787,6 @@ export default function ProvidersPage() {
               )}
             </div>
 
-            {/* HTTP 프로바이더 */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">
@@ -882,8 +844,7 @@ export default function ProvidersPage() {
                     setTesting(hp.name);
                     setTestResult(null);
                     try {
-                      // draft(편집 중 값: endpoint_type 등)를 저장된 config 위에 병합 →
-                      // 자동 감지 후 저장하지 않아도 올바른 엔드포인트로 테스트
+                      // Merge draft edits (e.g. endpoint_type) over saved config to test without saving first.
                       const result = await testHttpProvider({ name: hp.name, ...hp.config, ...(draft as Partial<HttpProviderConfig>) });
                       setTestResult(result);
                     } catch (e) {
@@ -913,7 +874,6 @@ export default function ProvidersPage() {
   );
 }
 
-// Generic 프로바이더 수정 모드 전용 필드
 function GenericFieldsEditor({ draft, updateDraft, t }: {
   draft: Partial<ProviderConfig>;
   updateDraft: (field: keyof ProviderConfig, value: string | number | boolean) => void;
@@ -927,7 +887,6 @@ function GenericFieldsEditor({ draft, updateDraft, t }: {
     <div className="space-y-4 border-t border-dashed border-gray-300 dark:border-gray-700 pt-4">
       <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('providers.genericSettings')}</p>
 
-      {/* 프롬프트 전달 */}
       <div>
         <label className={labelCls}>{t('providers.promptMode')}</label>
         <div className="flex gap-4">
@@ -945,7 +904,6 @@ function GenericFieldsEditor({ draft, updateDraft, t }: {
         </div>
       </div>
 
-      {/* 인자 템플릿 */}
       <div>
         <label className={labelCls}>
           {t('providers.argsTemplate')}
@@ -959,7 +917,6 @@ function GenericFieldsEditor({ draft, updateDraft, t }: {
         />
       </div>
 
-      {/* 출력 모드 */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className={labelCls}>{t('providers.outputMode')}</label>
@@ -991,7 +948,6 @@ function GenericFieldsEditor({ draft, updateDraft, t }: {
         )}
       </div>
 
-      {/* 스트리밍 */}
       <div className="flex items-center gap-2">
         <label className={labelCls + ' mb-0'}>{t('providers.streamingEnabled')}</label>
         <ToggleSwitch
@@ -1003,7 +959,6 @@ function GenericFieldsEditor({ draft, updateDraft, t }: {
   );
 }
 
-// 커스텀 프로바이더 추가 폼
 function AddProviderForm({
   draft,
   setDraft,
@@ -1055,7 +1010,6 @@ function AddProviderForm({
 
   return (
     <div className="bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-500/30 rounded-xl p-5 space-y-4">
-      {/* 안내 */}
       <div className="px-4 py-3 rounded-lg border bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20 text-blue-700 dark:text-blue-300 text-xs space-y-1">
         <p className="font-medium">{t('providers.addGuideTitle')}</p>
         <ol className="list-decimal list-inside space-y-0.5 text-blue-600 dark:text-blue-400">
@@ -1071,7 +1025,6 @@ function AddProviderForm({
         </div>
       )}
 
-      {/* 기본 정보 */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className={labelCls}>
@@ -1142,7 +1095,6 @@ function AddProviderForm({
         </div>
       </div>
 
-      {/* 프롬프트 전달 방식 */}
       <div>
         <label className={labelCls}>{t('providers.promptMode')}</label>
         <div className="flex gap-4">
@@ -1161,7 +1113,6 @@ function AddProviderForm({
         </div>
       </div>
 
-      {/* CLI 인자 템플릿 */}
       <div>
         <label className={labelCls}>
           {t('providers.argsTemplate')}
@@ -1176,7 +1127,6 @@ function AddProviderForm({
         />
       </div>
 
-      {/* 출력 모드 */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className={labelCls}>{t('providers.outputMode')}</label>
@@ -1209,7 +1159,6 @@ function AddProviderForm({
         )}
       </div>
 
-      {/* 스트리밍 */}
       <div className="flex items-center gap-2">
         <label className={labelCls + ' mb-0'}>{t('providers.streamingEnabled')}</label>
         <ToggleSwitch
@@ -1218,7 +1167,6 @@ function AddProviderForm({
         />
       </div>
 
-      {/* Extra Args */}
       <div>
         <label className={labelCls}>
           {t('providers.extraArgs')}
@@ -1233,7 +1181,6 @@ function AddProviderForm({
         />
       </div>
 
-      {/* 테스트 결과 */}
       {testResult && (
         <div
           className={`px-4 py-3 rounded-lg border text-sm space-y-1 ${
@@ -1257,7 +1204,6 @@ function AddProviderForm({
         </div>
       )}
 
-      {/* 버튼 */}
       <div className="flex gap-3 pt-2">
         <button
           onClick={handleTestBeforeRegister}
@@ -1284,7 +1230,6 @@ function AddProviderForm({
   );
 }
 
-// Claude 프로바이더 전용: 실행 모드(CLI / SDK / Channel) 설정 섹션
 function ClaudeSdkSettings({ draft, setDraft, setMessage, t }: {
   draft: Partial<ProviderConfig>;
   setDraft: React.Dispatch<React.SetStateAction<Partial<ProviderConfig>>>;
@@ -1320,7 +1265,6 @@ function ClaudeSdkSettings({ draft, setDraft, setMessage, t }: {
 
   return (
     <div className="space-y-4 border-t border-dashed border-gray-300 dark:border-gray-700 pt-4">
-      {/* 실행 모드 선택 (3-way) */}
       <div>
         <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">
           {t('providers.executionMode')}
@@ -1345,12 +1289,10 @@ function ClaudeSdkSettings({ draft, setDraft, setMessage, t }: {
         </p>
       </div>
 
-      {/* Channel 모드 옵션 + bridge 라이프사이클 제어 */}
       {isChannelMode && (
         <ChannelSettings draft={draft} setDraft={setDraft} setMessage={setMessage} labelCls={labelCls} inputCls={inputCls} />
       )}
 
-      {/* SDK 옵션 (SDK 모드일 때만 표시) */}
       {isSDKMode && (
         <div className="space-y-3 pl-3 border-l-2 border-purple-300 dark:border-purple-600/40">
           <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">
@@ -1437,7 +1379,6 @@ function ClaudeSdkSettings({ draft, setDraft, setMessage, t }: {
   );
 }
 
-// Claude Channel 모드 옵션 + bridge 라이프사이클 제어
 function ChannelSettings({ draft, setDraft, setMessage, labelCls, inputCls }: {
   draft: Partial<ProviderConfig>;
   setDraft: React.Dispatch<React.SetStateAction<Partial<ProviderConfig>>>;
@@ -1532,7 +1473,6 @@ function ChannelSettings({ draft, setDraft, setMessage, labelCls, inputCls }: {
         </div>
       </div>
 
-      {/* managed: star-cliproxy가 내장 bridge를 직접 관리 */}
       <div className="space-y-3 border-t border-dashed border-gray-300 dark:border-gray-700 pt-3">
         <div className="flex items-center gap-2">
           <ToggleSwitch enabled={managed} onToggle={() => update('managed', !managed)} />
@@ -1592,7 +1532,6 @@ function ChannelSettings({ draft, setDraft, setMessage, labelCls, inputCls }: {
   );
 }
 
-// 내장 bridge 상태 표시 + start/stop/restart 제어
 function ChannelBridgePanel() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<ChannelBridgeStatus | null>(null);
@@ -1680,7 +1619,6 @@ function ChannelBridgePanel() {
   );
 }
 
-// Codex 프로바이더 전용: 실행 모드 + 모드별 옵션 섹션
 function CodexAppServerSettings({ draft, setDraft, setMessage, t }: {
   draft: Partial<ProviderConfig>;
   setDraft: React.Dispatch<React.SetStateAction<Partial<ProviderConfig>>>;
@@ -1712,7 +1650,6 @@ function CodexAppServerSettings({ draft, setDraft, setMessage, t }: {
 
   return (
     <div className="space-y-4 border-t border-dashed border-gray-300 dark:border-gray-700 pt-4">
-      {/* 실행 모드 토글 */}
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -1747,7 +1684,6 @@ function CodexAppServerSettings({ draft, setDraft, setMessage, t }: {
         </div>
       </div>
 
-      {/* CLI 옵션 (CLI 모드일 때만 표시) */}
       {!isAppServerMode && (
         <div className="space-y-3 pl-3 border-l-2 border-blue-300 dark:border-blue-600/40">
           <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
@@ -1770,7 +1706,6 @@ function CodexAppServerSettings({ draft, setDraft, setMessage, t }: {
         </div>
       )}
 
-      {/* App Server 옵션 (App Server 모드일 때만 표시) */}
       {isAppServerMode && (
         <div className="space-y-3 pl-3 border-l-2 border-emerald-300 dark:border-emerald-600/40">
           <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
@@ -1881,7 +1816,6 @@ function ToggleSwitch({
   );
 }
 
-// HTTP 프로바이더 카드
 function HttpProviderCard({
   hp, expanded, onToggle, draft, updateDraft,
   saving, testing, testResult, message,
@@ -1933,7 +1867,6 @@ function HttpProviderCard({
 
   return (
     <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700/50 shadow-sm overflow-hidden">
-      {/* 헤더 */}
       <div
         className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50"
         onClick={onToggle}
@@ -1953,7 +1886,6 @@ function HttpProviderCard({
         <span className="text-xs text-gray-400">{expanded ? '▲' : '▼'}</span>
       </div>
 
-      {/* 확장 내용 */}
       {expanded && (
         <div className="px-4 py-3 border-t border-gray-100 dark:border-gray-800 space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -2042,7 +1974,6 @@ function HttpProviderCard({
             </div>
           </div>
 
-          {/* 테스트 결과 */}
           {testResult && (
             <div className={`px-3 py-2 rounded text-xs ${
               testResult.success
@@ -2066,7 +1997,6 @@ function HttpProviderCard({
             </div>
           )}
 
-          {/* 액션 버튼 */}
           <div className="flex gap-2 pt-1">
             <button
               onClick={onSave}
@@ -2102,7 +2032,6 @@ function HttpProviderCard({
   );
 }
 
-// HTTP 프로바이더 추가 폼
 function AddHttpProviderForm({
   draft, setDraft, error, saving, onSave, onCancel, t,
 }: {
@@ -2154,7 +2083,6 @@ function AddHttpProviderForm({
 
   return (
     <div className="bg-purple-50/50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/20 rounded-lg px-4 py-4 space-y-4">
-      {/* 가이드 */}
       <div className="px-3 py-2 rounded bg-purple-100/50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/20 text-xs text-purple-700 dark:text-purple-300">
         {t('providers.httpGuide')}
       </div>
@@ -2264,7 +2192,6 @@ function AddHttpProviderForm({
         </div>
       </div>
 
-      {/* 테스트 결과 */}
       {localTestResult && (
         <div className={`px-3 py-2 rounded text-xs ${
           localTestResult.success
@@ -2278,7 +2205,6 @@ function AddHttpProviderForm({
         </div>
       )}
 
-      {/* 버튼 */}
       <div className="flex gap-2 pt-1">
         <button
           onClick={handleTestBeforeRegister}

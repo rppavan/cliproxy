@@ -1,6 +1,3 @@
-// OpenAI-compatible API 타입 정의
-
-// OpenAI content parts 형식 (multimodal / LangChain / LiteLLM 등에서 사용)
 export interface ChatMessageContentPart {
   type: string;
   text?: string;
@@ -9,9 +6,6 @@ export interface ChatMessageContentPart {
 
 export type ChatMessageContent = string | ChatMessageContentPart[];
 
-// === Function calling (OpenAI 호환) ===
-
-// 도구(함수) 정의. parameters는 JSON Schema 객체.
 export interface FunctionDefinition {
   name: string;
   description?: string;
@@ -23,15 +17,13 @@ export interface ChatCompletionTool {
   function: FunctionDefinition;
 }
 
-// tool_choice: 'none'|'auto'|'required' 또는 특정 함수 강제
 export type ToolChoice =
   | 'none'
   | 'auto'
   | 'required'
   | { type: 'function'; function: { name: string } };
 
-// 모델이 요청한 도구 호출 (비스트리밍 응답 message.tool_calls / 멀티턴 히스토리).
-// arguments는 JSON 문자열 (OpenAI 스펙).
+// arguments is a JSON string per OpenAI specification.
 export interface ChatMessageToolCall {
   id: string;
   type: 'function';
@@ -42,19 +34,14 @@ export interface ChatMessageToolCall {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'developer' | 'tool';
   content: ChatMessageContent;
-  name?: string;            // tool role: 함수/도구 이름
-  tool_call_id?: string;    // tool role: 연관된 tool_call ID
-  // assistant role: 모델이 요청한 도구 호출 목록 (멀티턴 도구 대화 시 백엔드로 그대로 전달).
+  name?: string;
+  tool_call_id?: string;
   tool_calls?: ChatMessageToolCall[];
-  // assistant 응답에만 사용: 추론 모델의 thinking/CoT 본문. content와 분리되어 보존됨.
-  // OpenAI 공식 스펙 외 비표준 확장 (vLLM/sglang/OpenRouter 등과 호환).
+  // Non-standard extension compatible with vLLM/sglang/OpenRouter to preserve reasoning/CoT text separately.
   reasoning_content?: string;
 }
 
-// === Structured output (OpenAI 호환 response_format) ===
-
-// json_schema 모드의 스키마 봉투. name/strict는 OpenAI 래퍼이고,
-// 백엔드/CLI에 실제로 전달되는 것은 중첩된 schema뿐이다.
+// Inner schema is forwarded to backends/CLIs while name/strict form the OpenAI envelope.
 export interface ChatJsonSchema {
   name: string;
   description?: string;
@@ -62,9 +49,7 @@ export interface ChatJsonSchema {
   schema: Record<string, unknown>;
 }
 
-// 세 타입 모두 요청으로 받아들이되, 스키마 강제는 json_schema에서만 일어난다.
-// text/json_object는 지원 백엔드(HTTP provider)로 패스스루만 하며,
-// 강제하지 못하는 프로바이더로 라우팅되면 X-Unsupported-Params 헤더로 알린다.
+// json_schema enforces schemas; text and json_object pass through. Unsupported providers report via X-Unsupported-Params.
 export type ChatResponseFormat =
   | { type: 'text' }
   | { type: 'json_object' }
@@ -78,15 +63,14 @@ export interface ChatCompletionRequest {
   temperature?: number;
   top_p?: number;
   stop?: string | string[];
-  // OpenAI 호환 function calling. HTTP provider와 Tool Bridge가 지원하며 일반 CLI provider는 무시.
+  // Supported by HTTP providers and Tool Bridge; ignored by standard CLI providers.
   tools?: ChatCompletionTool[];
   tool_choice?: ToolChoice;
-  // OpenAI 호환 추론 수준. 지정 시 model_mapping의 값보다 우선.
+  // Overrides model_mapping reasoning_effort if set.
   reasoning_effort?: string;
-  // 추론 본문(thinking)을 응답에 포함할지. 우선순위: body > mapping > 전역 default(false).
+  // Precedence: request body > mapping > global default (false).
   include_reasoning?: boolean;
-  // OpenAI 호환 structured output. HTTP provider는 패스스루, agy는 --json-schema로 변환.
-  // 강제하지 못하는 프로바이더는 무시하고 X-Unsupported-Params 헤더로 알린다.
+  // Forwarded by HTTP provider, converted to --json-schema by agy, or signaled via X-Unsupported-Params.
   response_format?: ChatResponseFormat;
 }
 
@@ -111,7 +95,6 @@ export interface ChatCompletionResponse {
   usage: UsageInfo;
 }
 
-// SSE 스트리밍 타입
 export interface ChatCompletionChunkToolCall {
   index: number;
   id?: string;
@@ -122,7 +105,7 @@ export interface ChatCompletionChunkToolCall {
 export interface ChatCompletionChunkDelta {
   role?: 'assistant';
   content?: string;
-  // 추론 본문 delta. vLLM/sglang reasoning_parser 호환 비표준 확장.
+  // Reasoning content delta (compatible with vLLM/sglang reasoning_parser).
   reasoning_content?: string;
   tool_calls?: ChatCompletionChunkToolCall[];
 }
@@ -141,7 +124,6 @@ export interface ChatCompletionChunk {
   choices: ChatCompletionChunkChoice[];
 }
 
-// 모델 목록 응답
 export interface ModelObject {
   id: string;
   object: 'model';
@@ -154,7 +136,6 @@ export interface ModelListResponse {
   data: ModelObject[];
 }
 
-// OpenAI Images API 호환 타입
 export interface ImageGenerationRequest {
   model: string;
   prompt: string;
@@ -172,7 +153,6 @@ export interface ImageGenerationResponse {
   }>;
 }
 
-// OpenAI Embeddings API 호환 타입
 export interface EmbeddingRequest {
   model: string;
   input: string | string[];
@@ -196,7 +176,7 @@ export interface EmbeddingResponse {
   };
 }
 
-// Rerank API 호환 타입 (Cohere Rerank API 스타일)
+// Cohere Rerank API-compatible format.
 export interface RerankRequest {
   model: string;
   query: string;
@@ -220,7 +200,6 @@ export interface RerankResponse {
   };
 }
 
-// OpenAI Audio Speech (TTS) API 호환 타입
 export type TtsResponseFormat = 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm';
 
 export interface TtsRequest {
@@ -231,7 +210,6 @@ export interface TtsRequest {
   speed?: number;
 }
 
-// 에러 응답
 export interface ApiErrorResponse {
   error: {
     message: string;

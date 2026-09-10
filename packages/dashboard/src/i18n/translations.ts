@@ -1,9 +1,7 @@
-// 영어/한국어 번역 객체
 export type Lang = 'en' | 'ko';
 
 export const translations: Record<Lang, Record<string, string>> = {
   en: {
-    // 사이드바
     'nav.dashboard': 'Dashboard',
     'nav.models': 'Models',
     'nav.apiKeys': 'API Keys',
@@ -16,7 +14,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'nav.apiGuide': 'API Guide',
     'sidebar.subtitle': 'AI CLI Proxy Dashboard',
 
-    // 공통
     'common.loading': 'Loading...',
     'common.refresh': 'Refresh',
     'common.prev': 'Prev',
@@ -56,7 +53,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'common.unknown': 'Unknown',
     'common.restartRequired': 'restart required',
 
-    // 관리자 인증
     'auth.title': 'Admin Token Required',
     'auth.description': 'Enter the ADMIN_TOKEN configured on the server to use the dashboard.',
     'auth.adminTokenLabel': 'Admin Token',
@@ -65,7 +61,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'auth.clearToken': 'Clear Token',
     'auth.enterDashboard': 'Open Dashboard',
 
-    // 대시보드
     'dashboard.title': 'Dashboard',
     'dashboard.subtitle': 'AI CLI Proxy Service',
     'dashboard.updated': 'Updated',
@@ -111,7 +106,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'dashboard.modelsCount': 'models',
     'dashboard.errorOverlay': 'Error overlay (top of bar)',
 
-    // 모델 매핑
     'models.title': 'Model Mappings',
     'models.addMapping': '+ Add Mapping',
     'models.aliasLabel': 'Alias (client sends)',
@@ -181,7 +175,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'models.priority': 'Priority',
     'models.status': 'Status',
     'models.actions': 'Actions',
-    // 모달 / 토스트
     'models.editTitle': 'Edit mapping',
     'models.createTitle': 'New mapping',
     'models.testTitle': 'Quick test',
@@ -198,7 +191,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'models.sortIndicatorAsc': '↑',
     'models.sortIndicatorDesc': '↓',
 
-    // System Status — provider kind 구분
     'systemStatus.kindBuiltin': 'Built-in',
     'systemStatus.kindBuiltinShort': 'B',
     'systemStatus.kindToolBridge': 'Tool Bridge',
@@ -208,7 +200,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'systemStatus.kindHttp': 'HTTP',
     'systemStatus.kindHttpShort': 'H',
 
-    // API 키
     'apiKeys.title': 'API Keys',
     'apiKeys.generateButton': '+ Generate Key',
     'apiKeys.copyWarning': 'Copy and save this key now. It cannot be viewed again after closing.',
@@ -226,7 +217,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'apiKeys.regenerateTitle': 'Regenerate key',
     'apiKeys.deleteTitle': 'Delete key',
 
-    // 레이트 리밋
     'rateLimits.title': 'Rate Limits',
     'rateLimits.description': 'Changes apply immediately without server restart.',
     'rateLimits.globalLimits': 'Global Limits',
@@ -245,7 +235,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'rateLimits.hierarchyNote': 'Requests must pass all 3 levels. Exceeding any limit returns 429 error.',
     'rateLimits.saveChanges': 'Save Changes',
 
-    // 로그
     'logs.title': 'Request Logs',
     'logs.time': 'Time',
     'logs.model': 'Model',
@@ -264,7 +253,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'logs.confirmDelete': 'Delete all logs older than {days} days? This cannot be undone.',
     'logs.deleteSuccess': '{count} logs older than {days} days deleted.',
 
-    // 디버그
     'debug.title': 'Debug',
     'debug.debugCapture': 'Debug Capture',
     'debug.globalToggle': 'Global',
@@ -305,7 +293,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'debug.sessionRequests': '{count} requests in this session',
     'debug.closeModal': 'Close',
 
-    // 설정
     'settings.title': 'Settings',
     'settings.validationLimits': 'Validation Limits',
     'settings.validationDescription': 'Most changes apply immediately. HTTP body size limit still requires a restart.',
@@ -339,7 +326,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'settings.invalidFile': 'Invalid file format',
     'settings.selectFile': 'Select JSON file',
 
-    // 프로바이더
     'providers.title': 'Providers',
     'providers.description': 'Manage provider settings at runtime. Changes apply immediately.',
     'providers.cliPath': 'CLI Path',
@@ -460,7 +446,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'providers.cliEphemeralNote': 'Adds --ephemeral so codex exec does not persist session jsonl files to ~/.codex/sessions. Recommended.',
     'providers.runtimeRestricted': 'Built-in providers only allow runtime updates for enabled, default model, concurrency, timeout, and execution mode options.',
 
-    // HTTP 프로바이더
     'providers.httpSection': 'HTTP Providers',
     'providers.httpDescription': 'OpenAI-compatible HTTP API providers (MLX, llama.cpp, vLLM, Ollama, etc.)',
     'providers.addHttp': 'Add HTTP Provider',
@@ -483,7 +468,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'providers.detecting': 'Detecting…',
     'providers.endpointDetectFailed': 'Could not detect — select manually',
 
-    // 플레이그라운드
     'playground.title': 'Playground',
     'playground.subtitle': 'Test API calls directly from the browser.',
     'playground.nonChatTitle': 'This model is not a chat model',
@@ -516,7 +500,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'playground.show': 'show',
     'playground.hide': 'hide',
 
-    // API 가이드
     'guide.title': 'API Guide',
     'guide.subtitle': 'star-cliproxy provides an OpenAI-compatible API. Just change the base_url of your existing OpenAI SDK to start using it.',
     'guide.overview': 'Overview',
@@ -584,7 +567,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'guide.visionNote': 'Prefer @<path> over inlining base64. For agy, image_url / base64 content parts are reduced to a plain [image] marker and are NOT sent as image data — and large base64 needlessly bloats the request. (The gemini provider, if re-enabled, auto-converts standard image_url parts to a temp-file @<path>.)',
   },
   ko: {
-    // 사이드바
     'nav.dashboard': '대시보드',
     'nav.models': '모델',
     'nav.apiKeys': 'API 키',
@@ -597,7 +579,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'nav.apiGuide': 'API 가이드',
     'sidebar.subtitle': 'AI CLI 프록시 대시보드',
 
-    // 공통
     'common.loading': '로딩 중...',
     'common.refresh': '새로고침',
     'common.prev': '이전',
@@ -637,7 +618,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'common.unknown': '알 수 없음',
     'common.restartRequired': '재시작 필요',
 
-    // 관리자 인증
     'auth.title': '관리자 토큰이 필요합니다',
     'auth.description': '대시보드를 사용하려면 서버에 설정된 ADMIN_TOKEN을 입력하세요.',
     'auth.adminTokenLabel': '관리자 토큰',
@@ -646,7 +626,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'auth.clearToken': '토큰 삭제',
     'auth.enterDashboard': '대시보드 열기',
 
-    // 대시보드
     'dashboard.title': '대시보드',
     'dashboard.subtitle': 'AI CLI 프록시 서비스',
     'dashboard.updated': '갱신',
@@ -692,7 +671,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'dashboard.modelsCount': '모델',
     'dashboard.errorOverlay': '에러 표시 (막대 상단)',
 
-    // 모델 매핑
     'models.title': '모델 매핑',
     'models.addMapping': '+ 매핑 추가',
     'models.aliasLabel': '별칭 (클라이언트 전송값)',
@@ -762,7 +740,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'models.priority': '우선순위',
     'models.status': '상태',
     'models.actions': '작업',
-    // 모달 / 토스트
     'models.editTitle': '매핑 수정',
     'models.createTitle': '새 매핑',
     'models.testTitle': '빠른 테스트',
@@ -779,7 +756,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'models.sortIndicatorAsc': '↑',
     'models.sortIndicatorDesc': '↓',
 
-    // System Status — provider kind 구분
     'systemStatus.kindBuiltin': '기본',
     'systemStatus.kindBuiltinShort': '기본',
     'systemStatus.kindToolBridge': '툴 브리지',
@@ -789,7 +765,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'systemStatus.kindHttp': 'HTTP',
     'systemStatus.kindHttpShort': 'HTTP',
 
-    // API 키
     'apiKeys.title': 'API 키',
     'apiKeys.generateButton': '+ 키 생성',
     'apiKeys.copyWarning': '이 키를 지금 복사하여 저장하세요. 닫은 후에는 다시 볼 수 없습니다.',
@@ -807,7 +782,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'apiKeys.regenerateTitle': '키 재생성',
     'apiKeys.deleteTitle': '키 삭제',
 
-    // 레이트 리밋
     'rateLimits.title': '요청 제한',
     'rateLimits.description': '변경 사항은 서버 재시작 없이 즉시 반영됩니다.',
     'rateLimits.globalLimits': 'Global Limits',
@@ -826,7 +800,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'rateLimits.hierarchyNote': '요청은 3단계 모두를 통과해야 합니다. 하나라도 초과하면 429 에러가 반환됩니다.',
     'rateLimits.saveChanges': '변경사항 저장',
 
-    // 로그
     'logs.title': '요청 로그',
     'logs.time': '시간',
     'logs.model': '모델',
@@ -845,7 +818,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'logs.confirmDelete': '{days}일 이전의 로그를 모두 삭제하시겠습니까? 되돌릴 수 없습니다.',
     'logs.deleteSuccess': '{days}일 이전 로그 {count}건이 삭제되었습니다.',
 
-    // 디버그
     'debug.title': '디버그',
     'debug.debugCapture': '디버그 캡처',
     'debug.globalToggle': '전역',
@@ -886,7 +858,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'debug.sessionRequests': '이 세션의 요청 {count}건',
     'debug.closeModal': '닫기',
 
-    // 설정
     'settings.title': '설정',
     'settings.validationLimits': '유효성 검사 한도',
     'settings.validationDescription': '대부분의 변경은 즉시 적용되지만, HTTP 본문 크기 제한은 재시작이 필요합니다.',
@@ -920,7 +891,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'settings.invalidFile': '잘못된 파일 형식입니다',
     'settings.selectFile': 'JSON 파일 선택',
 
-    // 프로바이더
     'providers.title': '프로바이더',
     'providers.description': '프로바이더 설정을 런타임에 변경합니다. 변경 사항은 즉시 반영됩니다.',
     'providers.cliPath': 'CLI 경로',
@@ -1041,7 +1011,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'providers.cliEphemeralNote': '--ephemeral 플래그를 자동 추가해 codex exec 실행 시 ~/.codex/sessions에 jsonl 세션 파일을 남기지 않습니다. 권장.',
     'providers.runtimeRestricted': '빌트인 프로바이더는 런타임에 enabled, default model, 동시 실행 수, timeout, 실행 모드 옵션만 변경할 수 있습니다.',
 
-    // HTTP 프로바이더
     'providers.httpSection': 'HTTP 프로바이더',
     'providers.httpDescription': 'OpenAI 호환 HTTP API 프로바이더 (MLX, llama.cpp, vLLM, Ollama 등)',
     'providers.addHttp': 'HTTP 프로바이더 추가',
@@ -1064,7 +1033,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'providers.detecting': '감지 중…',
     'providers.endpointDetectFailed': '감지 실패 — 수동 선택하세요',
 
-    // 플레이그라운드
     'playground.title': '플레이그라운드',
     'playground.subtitle': '브라우저에서 직접 API 호출을 테스트하세요.',
     'playground.nonChatTitle': '이 모델은 채팅 모델이 아닙니다',
@@ -1097,7 +1065,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     'playground.show': '펼치기',
     'playground.hide': '접기',
 
-    // API 가이드
     'guide.title': 'API 가이드',
     'guide.subtitle': 'star-cliproxy는 OpenAI-compatible API를 제공합니다. 기존 OpenAI SDK의 base_url만 변경하면 즉시 사용 가능합니다.',
     'guide.overview': '개요',

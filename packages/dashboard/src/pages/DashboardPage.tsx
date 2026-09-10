@@ -24,7 +24,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  // 기본 기간 7d — 'All'(0)은 기간이 길어지면 불필요한 데이터를 과도하게 조회
+  // Defaults to 7d to avoid excessive queries against large datasets if 'All' (0) were default.
   const [days, setDays] = useState(7);
 
   const load = () => {
@@ -39,7 +39,6 @@ export default function DashboardPage() {
 
   useEffect(() => { load(); }, [days]);
 
-  // 자동 리프레시: 활성 요청 유무에 따라 간격 조정
   const hasActiveRequests = (data?.activeRequests?.count ?? 0) > 0;
   useEffect(() => {
     const intervalMs = hasActiveRequests ? 2_000 : 10_000;
@@ -72,7 +71,6 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
@@ -112,13 +110,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 요약 카드 */}
       <SummaryCards data={data} />
 
-      {/* 활성 요청 (있을 때만) */}
       <ActiveRequests activeRequests={data.activeRequests} />
 
-      {/* 추이 차트 + 시스템 상태 */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5">
           <TrendChart />
@@ -133,19 +128,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 프로바이더 사용량 + 인기 모델 (전체 너비, 2단) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ProviderUsage providerStats={data.providerStats} />
         <PopularModels popularModels={data.popularModels} />
       </div>
 
-      {/* 최근 요청 (전체 너비) */}
       <RecentRequests
         recentRequests={data.recentRequests}
         activeRequests={data.activeRequests}
       />
 
-      {/* 최근 에러 (있을 때만) */}
       <RecentErrors recentErrors={data.recentErrors} />
     </div>
   );

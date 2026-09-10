@@ -32,7 +32,6 @@ export class ProviderRegistry {
     return this.providers.delete(name);
   }
 
-  // 프로바이더 설정 조회 (대시보드용)
   getProviderConfig(name: string): ProviderConfigYaml | undefined {
     const provider = this.providers.get(name);
     if (!provider) return undefined;
@@ -40,16 +39,14 @@ export class ProviderRegistry {
     return typeof configurable.getConfig === 'function' ? configurable.getConfig() : undefined;
   }
 
-  // 프로바이더 설정 런타임 변경 (대시보드용)
   updateProviderConfig(name: string, partial: Partial<ProviderConfigYaml>): boolean {
     const provider = this.providers.get(name);
     if (!provider) return false;
 
-    // cli_path 변경 시 검증 필수 (RCE 방지)
+    // Validate cli_path to prevent arbitrary command injection
     if (partial.cli_path !== undefined) {
       validateCliPath(name, partial.cli_path);
     }
-    // extra_args 타입 검증
     if (partial.extra_args !== undefined) {
       if (!Array.isArray(partial.extra_args) || !partial.extra_args.every(a => typeof a === 'string')) {
         throw new Error(`Invalid extra_args for ${name}: must be string array`);
@@ -65,7 +62,6 @@ export class ProviderRegistry {
   }
 }
 
-// cli_path 검증: 허용된 문자만 (영숫자, -, _, ., /, \, :)
 const SAFE_CLI_PATH = /^[a-zA-Z0-9_\-./\\:]+$/;
 
 function validateCliPath(provider: string, cliPath: string): void {
@@ -74,7 +70,6 @@ function validateCliPath(provider: string, cliPath: string): void {
   }
 }
 
-// 빌트인 프로바이더 팩토리
 type ProviderFactory = (config: ProviderConfigYaml) => BaseProvider;
 
 const builtinFactories: Record<string, ProviderFactory> = {
@@ -88,7 +83,6 @@ const builtinFactories: Record<string, ProviderFactory> = {
   opencode: (config) => new OpencodeProvider(config),
 };
 
-// 설정 기반으로 활성화된 Provider들을 등록
 export function createProviderRegistry(
   configs: Record<string, ProviderConfigYaml>,
 ): ProviderRegistry {
@@ -103,7 +97,7 @@ export function createProviderRegistry(
     if (factory) {
       registry.register(factory(config));
     }
-    // 빌트인이 아닌 프로바이더는 플러그인 로더에서 등록
+    // Non-builtin providers are registered by the plugin loader
   }
 
   return registry;

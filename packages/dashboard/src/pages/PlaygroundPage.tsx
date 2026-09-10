@@ -14,7 +14,7 @@ import { formatDuration } from '../components/dashboard/format';
 type ReasoningEffortValue = ReasoningEffort | '';
 const REASONING_EFFORT_OPTIONS: ReasoningEffortValue[] = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-// reasoning_effort를 CLI 옵션으로 지원하는 provider만 입력 활성화
+// Providers that support reasoning_effort via CLI options.
 const REASONING_SUPPORTED_PROVIDERS = new Set([
   'claude',
   'codex',
@@ -60,8 +60,7 @@ function formatClock(epoch: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-// API 키 마스킹: 앞 8자(sk-proxy-)와 끝 4자만 노출, 중간은 *로 가림.
-// 포커스가 없을 때 표시용 — 실제 값은 그대로 보존된다.
+// Display-only mask when blurred (reveals prefix and last 4 chars) while preserving original key.
 function maskApiKey(key: string): string {
   if (!key) return '';
   if (key.length <= 12) return '*'.repeat(key.length);
@@ -99,19 +98,14 @@ function savePlaygroundState(state: Partial<PlaygroundState>) {
 export default function PlaygroundPage() {
   const { t } = useTranslation();
 
-  // 모델 목록
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [authEnabled, setAuthEnabled] = useState<boolean | null>(null);
-  // HTTP 프로바이더 설정 맵 (provider명 → config) — 엔드포인트 타입 판별용
   const [httpProviderMap, setHttpProviderMap] = useState<Record<string, HttpProviderConfig>>({});
 
-  // 입력 상태
-  // localStorage에서 이전 상태 복원
   const saved = useRef(loadPlaygroundState());
   const [selectedModel, setSelectedModel] = useState(saved.current.model);
   const [apiKey, setApiKey] = useState(saved.current.apiKey);
-  // 포커스 중에는 실제 값, 아닐 때는 마스킹 표시 (편집·붙여넣기는 정상 동작)
   const [apiKeyFocused, setApiKeyFocused] = useState(false);
   const [messages, setMessages] = useState<Message[]>(saved.current.messages);
   const [stream, setStream] = useState(false);
@@ -119,13 +113,11 @@ export default function PlaygroundPage() {
   const [maxTokens, setMaxTokens] = useState<string>('');
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffortValue>('');
 
-  // 선택된 모델의 provider → reasoning_effort 지원 여부
   const selectedModelMeta = models.find((m) => m.alias === selectedModel);
   const selectedProvider = selectedModelMeta?.provider ?? '';
   const supportsReasoning = REASONING_SUPPORTED_PROVIDERS.has(selectedProvider);
 
-  // 선택된 모델의 엔드포인트 타입 — HTTP provider의 endpoint_type 우선, 없으면 이름 휴리스틱.
-  // chat이 아니면(임베딩/리랭크 등) Playground 채팅 호출이 불가하므로 안내 + 전송 차단.
+  // Non-chat models (embeddings, rerank) cannot receive chat completions in Playground.
   const selectedEndpointType = effectiveEndpointType(
     selectedModelMeta ? httpProviderMap[selectedModelMeta.provider]?.endpoint_type : undefined,
     selectedModelMeta?.provider,
@@ -134,14 +126,13 @@ export default function PlaygroundPage() {
   );
   const isNonChatModel = !!selectedModel && selectedEndpointType !== 'chat';
 
-  // provider 변경되어 비지원 상태가 되면 값 자동 클리어 (잘못된 요청 방지)
+  // Clear unsupported parameter if active provider does not support reasoning_effort.
   useEffect(() => {
     if (!supportsReasoning && reasoningEffort !== '') {
       setReasoningEffort('');
     }
   }, [supportsReasoning, reasoningEffort]);
 
-  // 응답 상태 (이전 결과 복원)
   const [response, setResponse] = useState(saved.current.response);
   const [reasoning, setReasoning] = useState(saved.current.reasoning ?? '');
   const [reasoningOpen, setReasoningOpen] = useState(false);
@@ -159,13 +150,12 @@ export default function PlaygroundPage() {
       const enabled = m.filter((x) => x.enabled);
       setModels(enabled);
       if (enabled.length > 0 && !selectedModel) {
-        // 저장된 모델이 목록에 있으면 유지, 없으면 첫 번째
+        // Retain saved model if available in list, otherwise default to first enabled model.
         const savedModel = saved.current.model;
         const exists = enabled.some((x) => x.alias === savedModel);
         setSelectedModel(exists ? savedModel : enabled[0].alias);
       }
     }).catch(() => {});
-    // API base URL 결정 (Vite 프록시 경유 시 상대 경로 사용)
     fetchServerInfo().then((info) => {
       setApiBaseUrl(`http://${window.location.hostname}:${info.serverPort}`);
       if (typeof info?.authEnabled === 'boolean') {
@@ -174,13 +164,11 @@ export default function PlaygroundPage() {
     }).catch(() => {
       setApiBaseUrl('');
     });
-    // HTTP 프로바이더 설정 로드 (endpoint_type 판별용)
     fetchHttpProviders().then((list) => {
       setHttpProviderMap(Object.fromEntries(list.map((p) => [p.name, p.config])));
     }).catch(() => {});
   }, []);
 
-  // 상태 변경 시 localStorage 저장
   useEffect(() => { savePlaygroundState({ apiKey }); }, [apiKey]);
   useEffect(() => { savePlaygroundState({ model: selectedModel }); }, [selectedModel]);
   useEffect(() => { savePlaygroundState({ messages }); }, [messages]);
@@ -188,20 +176,18 @@ export default function PlaygroundPage() {
   useEffect(() => { savePlaygroundState({ reasoning }); }, [reasoning]);
   useEffect(() => { if (metrics) savePlaygroundState({ metrics }); }, [metrics]);
 
-  // 메시지 관리
   const updateMessage = (idx: number, field: 'role' | 'content', value: string) => {
     setMessages((prev) => prev.map((m, i) => i === idx ? { ...m, [field]: value } : m));
   };
   const addMessage = () => setMessages((prev) => [...prev, { role: 'user', content: '' }]);
   const removeMessage = (idx: number) => setMessages((prev) => prev.filter((_, i) => i !== idx));
 
-  // 요청 body 생성
   const buildRequestBody = useCallback(() => {
     const body: Record<string, unknown> = {
       model: selectedModel,
       messages: messages.filter((m) => m.content.trim()),
       stream,
-      // Playground는 디버깅/탐색 도구이므로 항상 thinking을 받아온다.
+      // Always request reasoning to assist debugging and inspection.
       include_reasoning: true,
     };
     if (temperature) body.temperature = parseFloat(temperature);
@@ -210,7 +196,6 @@ export default function PlaygroundPage() {
     return body;
   }, [selectedModel, messages, stream, temperature, maxTokens, reasoningEffort]);
 
-  // 전송
   const handleSend = async () => {
     if (!selectedModel) return;
     if (authEnabled !== false && !apiKey) return;
@@ -225,7 +210,6 @@ export default function PlaygroundPage() {
     setMetrics(null);
     setElapsed(0);
 
-    // 경과 시간 타이머 (100ms 간격)
     const timerStart = Date.now();
     elapsedRef.current = setInterval(() => {
       setElapsed(Date.now() - timerStart);
@@ -238,7 +222,7 @@ export default function PlaygroundPage() {
     let ttfbMs: number | null = null;
 
     try {
-      // Vite 프록시 경유 (상대 경로)
+      // Use relative path to leverage Vite dev proxy or same-origin backend.
       const url = '/v1/chat/completions';
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -259,7 +243,6 @@ export default function PlaygroundPage() {
       }
 
       if (stream && res.body) {
-        // SSE 스트리밍 처리
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -290,7 +273,7 @@ export default function PlaygroundPage() {
             try {
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta ?? {};
-              // reasoning_content는 thinking 본문, content는 최종 답변.
+              // reasoning_content captures thinking blocks; content captures the final answer.
               const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
               if (typeof reasoningDelta === 'string' && reasoningDelta) {
                 accumulatedReasoning += reasoningDelta;
@@ -302,16 +285,14 @@ export default function PlaygroundPage() {
                 setResponse(accumulated);
               }
               if (parsed.usage) usage = parsed.usage;
-              // finish_reason이 있으면 스트림 종료
               if (parsed.choices?.[0]?.finish_reason) {
                 streamDone = true;
                 break;
               }
-            } catch { /* 파싱 실패 무시 */ }
+            } catch { /* ignore parse error */ }
           }
         }
 
-        // 스트림 정리
         reader.cancel().catch(() => {});
 
         const now = Date.now();
@@ -323,7 +304,6 @@ export default function PlaygroundPage() {
           completedAt: now,
         });
       } else {
-        // Non-streaming
         const data = await res.json();
         const msg = data.choices?.[0]?.message ?? {};
         const content = typeof msg.content === 'string' ? msg.content : '';
@@ -369,7 +349,6 @@ export default function PlaygroundPage() {
     savePlaygroundState({ response: '', reasoning: '', metrics: null, messages: [{ role: 'user', content: '' }] });
   };
 
-  // 자동 스크롤
   useEffect(() => {
     if (responseRef.current) {
       responseRef.current.scrollTop = responseRef.current.scrollHeight;
@@ -381,13 +360,11 @@ export default function PlaygroundPage() {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      {/* 헤더 */}
       <div>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t('playground.title')}</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{t('playground.subtitle')}</p>
       </div>
 
-      {/* 모델 + API 키 */}
       <div className={authEnabled === false ? 'w-full' : 'grid grid-cols-2 gap-4'}>
         <div>
           <label className={labelCls}>{t('playground.model')}</label>
@@ -421,7 +398,6 @@ export default function PlaygroundPage() {
         )}
       </div>
 
-      {/* 비채팅 모델(임베딩/리랭크 등) 안내 — 채팅 호출 불가 */}
       {isNonChatModel && (
         <div className="px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30">
           <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
@@ -433,7 +409,6 @@ export default function PlaygroundPage() {
         </div>
       )}
 
-      {/* 파라미터 */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-gray-500 dark:text-gray-400">Temperature</label>
@@ -490,7 +465,6 @@ export default function PlaygroundPage() {
         </label>
       </div>
 
-      {/* 메시지 에디터 */}
       <div className="space-y-2">
         <label className={labelCls}>{t('playground.messages')}</label>
         {messages.map((msg, idx) => (
@@ -531,7 +505,6 @@ export default function PlaygroundPage() {
         </button>
       </div>
 
-      {/* 요청 미리보기 */}
       <div>
         <button
           onClick={() => setShowPreview(!showPreview)}
@@ -549,7 +522,6 @@ export default function PlaygroundPage() {
         )}
       </div>
 
-      {/* 버튼 */}
       <div className="flex items-center gap-3">
         {loading ? (
           <>
@@ -584,14 +556,12 @@ export default function PlaygroundPage() {
         </button>
       </div>
 
-      {/* 에러 */}
       {error && (
         <div className="px-4 py-3 rounded-lg border bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 text-sm">
           {error}
         </div>
       )}
 
-      {/* 추론 본문 (있을 때만) — 답변 위에 접힌 박스로 */}
       {(reasoning || (loading && stream)) && (
         <div className="bg-white dark:bg-gray-900 border border-purple-200 dark:border-purple-500/30 rounded-xl overflow-hidden">
           <button
@@ -626,7 +596,6 @@ export default function PlaygroundPage() {
         </div>
       )}
 
-      {/* 응답 */}
       {(response || loading) && (
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
           <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-3 flex-wrap">

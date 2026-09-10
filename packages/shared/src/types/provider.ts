@@ -1,19 +1,14 @@
-// Provider 추상화 타입 정의
-
 import type { ChatMessage, ChatCompletionTool, ChatResponseFormat, ToolChoice, ChatMessageToolCall } from './api.js';
 
-// 빌트인 프로바이더 (메인 코드에 포함)
 export const BUILTIN_PROVIDERS = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode'] as const;
 export type BuiltinProviderName = typeof BUILTIN_PROVIDERS[number];
 
-// 플러그인 프로바이더까지 포함하는 동적 타입
 export type ProviderName = string;
 
-// 프로바이더가 지원하는 엔드포인트 타입
-// 'rerank'는 HTTP 프로바이더 전용 (CLI/플러그인 프로바이더는 지원하지 않음).
+// 'rerank' is supported only by HTTP providers (CLI/plugin providers do not support reranking).
 export type EndpointType = 'chat' | 'images' | 'tts' | 'embeddings' | 'rerank';
 
-// 플러그인 설정 (ProviderConfigYaml과 동일 구조, 순환 참조 방지용)
+// Matches ProviderConfigYaml to avoid circular import with config.ts
 export interface PluginProviderConfig {
   enabled: boolean;
   cli_path: string;
@@ -21,10 +16,9 @@ export interface PluginProviderConfig {
   max_concurrent: number;
   timeout_ms: number;
   extra_args: string[];
-  [key: string]: unknown;  // 플러그인 고유 설정 허용
+  [key: string]: unknown;
 }
 
-// 플러그인 인터페이스 — 커스텀 프로바이더가 구현해야 하는 계약
 export interface CliproxyPlugin {
   name: string;
   endpointTypes: EndpointType[];
@@ -32,21 +26,18 @@ export interface CliproxyPlugin {
   createParser?(): StreamParser;
 }
 
-// 플러그인 프로바이더 인터페이스 (BaseProvider 의존성 제거용)
 export interface CliproxyPluginProvider {
   readonly name: string;
   readonly endpointTypes?: EndpointType[];
   execute(options: ExecuteOptions): Promise<ExecuteResult>;
-  /** @deprecated ProviderEvent 기반 AsyncIterable 권장 */
+  /** @deprecated Prefer ProviderEvent-based AsyncIterable */
   executeStream?(options: ExecuteOptions): AsyncIterable<StreamChunk | ProviderEvent>;
   checkHealth(): Promise<HealthStatus>;
 }
 
-// StreamParser 인터페이스 (shared에서 정의하여 플러그인이 참조 가능)
 export interface StreamParser {
-  /** @deprecated parseEvents() 사용 권장 */
+  /** @deprecated Use parseEvents() instead */
   parse(line: string): StreamChunk | null;
-  /** 한 줄의 CLI 출력을 0개 이상의 ProviderEvent로 변환 */
   parseEvents?(line: string): ProviderEvent[];
 }
 
@@ -66,7 +57,6 @@ export interface DebugCaptureInfo {
   stderr?: string;
   streamLines?: string[];
 
-  // HTTP Provider 전용
   httpRequest?: {
     method: string;
     url: string;
@@ -80,14 +70,13 @@ export interface DebugCaptureInfo {
   };
   httpStreamLines?: string[];
 
-  // 파싱 이전의 raw 응답 텍스트
   rawResponseText?: string;
 }
 
-// CLI 추론 수준 — provider별 지원 범위에 맞춰 변환한다.
-// Codex/Grok/Agy는 미지원 단계를 provider 범위로 폴백한다.
-// Kimi K3는 low/high/max로 정규화하며, 다른 Kimi 모델에서는 무시한다.
-// Gemini CLI provider는 지원하지 않으므로 무시된다.
+// Reasoning effort levels normalized per provider.
+// Codex/Grok/Agy fall back unsupported levels to supported ranges.
+// Kimi K3 normalizes to low/high/max; ignored for other Kimi models.
+// Ignored by Gemini CLI.
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = [
@@ -107,21 +96,15 @@ export interface ExecuteOptions {
   temperature?: number;
   signal?: AbortSignal;
   onDebug?: (info: DebugCaptureInfo) => void;
-  clientKey?: string;  // 세션 재사용용 클라이언트 식별자 (API key ID 또는 X-Cliproxy-Session-Id 헤더)
-  // 모델 매핑에서 지정한 CLI 추론 수준 (provider별 옵션으로 변환)
+  clientKey?: string; // Client identifier for session reuse (API key ID or X-Cliproxy-Session-Id header)
   reasoningEffort?: ReasoningEffort;
-  // 모델 매핑에서 지정한 provider 옵션 오버라이드 (화이트리스트 기반 deep merge)
   providerOverrides?: import('./config.js').ProviderOverrides;
-  // 백엔드 비표준 필드 패스스루 (HTTP provider 전용). chat_template_kwargs/think/top_k 등.
-  // CLI provider는 무시.
+  // Passthrough fields for non-standard backend options (HTTP providers only); ignored by CLI providers.
   extraBody?: Record<string, unknown>;
-  // OpenAI 호환 function calling. HTTP provider는 패스스루, Tool Bridge는 구조화 출력으로 변환.
-  // 일반 CLI provider는 기존 호환성을 위해 무시한다.
+  // Function calling: passed through by HTTP providers, converted to structured output by Tool Bridge, ignored by CLI providers.
   tools?: ChatCompletionTool[];
   toolChoice?: ToolChoice;
-  // OpenAI 호환 structured output (Chat Completions의 response_format).
-  // 아래 이미지 전용 responseFormat과 의미가 완전히 다르므로 필드를 분리했다.
-  // HTTP provider는 요청 body로 패스스루, agy는 --json-schema로 변환한다.
+  // OpenAI structured output (response_format), separated from image generation responseFormat.
   chatResponseFormat?: ChatResponseFormat;
   // Image generation passthrough (OpenAI Images API)
   responseFormat?: 'url' | 'b64_json';
@@ -129,13 +112,11 @@ export interface ExecuteOptions {
   size?: string;
 }
 
-// Provider 실행 결과 메타데이터 (codex CLI thread_id 등)
 export interface ExecuteMeta {
-  threadId?: string;       // codex CLI: thread.started에서 추출한 UUID
-  threadReused?: boolean;  // resume args로 호출되었는지 여부
+  threadId?: string;       // Extracted from codex CLI thread.started event
+  threadReused?: boolean;  // Whether the call reused an existing session thread
 }
 
-// 임베딩 전용 옵션/결과
 export interface EmbeddingOptions {
   model: string;
   input: string | string[];
@@ -155,8 +136,7 @@ export interface EmbeddingResult {
   };
 }
 
-// 리랭킹 전용 옵션/결과 (Cohere Rerank API 호환 시맨틱).
-// HTTP 프로바이더 전용 — CLI/플러그인 프로바이더는 미지원.
+// Cohere Rerank API-compatible options (HTTP providers only).
 export interface RerankOptions {
   model: string;
   query: string;
@@ -182,7 +162,6 @@ export interface RerankResult {
   };
 }
 
-// TTS 전용 옵션/결과
 export interface TtsOptions {
   model: string;
   input: string;
@@ -198,7 +177,6 @@ export interface TtsResult {
   contentType: string;
 }
 
-// 토큰 사용량 (공통 타입)
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
@@ -207,16 +185,14 @@ export interface TokenUsage {
 
 export interface ExecuteResult {
   content: string;
-  /** 추론 모델의 thinking/CoT 본문. content와 분리되어 보존됨 (있을 때만). */
+  /** Reasoning/thinking content preserved separately from content. */
   reasoning?: string;
-  /** 모델이 요청한 도구 호출 (function calling). 있을 때만 — HTTP provider 비스트리밍. */
+  /** Function calling tool requests from the model (HTTP providers non-streaming). */
   toolCalls?: ChatMessageToolCall[];
   usage: TokenUsage;
   finishReason: 'stop' | 'length' | 'tool_calls' | 'error';
-  meta?: ExecuteMeta;  // provider별 부가 메타데이터 (codex thread_id 등)
+  meta?: ExecuteMeta;
 }
-
-// --- ProviderEvent: discriminated union 기반 스트리밍 이벤트 ---
 
 export interface ProviderTextDeltaEvent {
   type: 'text_delta';
@@ -227,9 +203,9 @@ export interface ProviderToolUseEvent {
   type: 'tool_use';
   toolCallId: string;
   toolName: string;
-  input: string;        // JSON string (완전한 인자 또는 스트리밍 delta)
-  isPartial?: boolean;  // true = 스트리밍 JSON delta
-  index?: number;       // 병렬 tool call 구분용 인덱스 (OpenAI delta.tool_calls[].index)
+  input: string;        // Complete arguments JSON string or streaming delta
+  isPartial?: boolean;  // True for streaming JSON delta
+  index?: number;       // Distinguishes parallel tool calls (matches OpenAI delta.tool_calls[].index)
 }
 
 export interface ProviderThinkingEvent {
@@ -253,8 +229,7 @@ export interface ProviderDoneEvent {
   finishReason?: 'stop' | 'length' | 'tool_use' | 'error';
 }
 
-// codex CLI thread.started 이벤트 — provider 내부에서 SessionManager 갱신용으로 가로챔.
-// HTTP 라우트 SSE 변환기는 default 분기로 무시 (외부 노출 없음 — 응답 헤더로만 노출).
+// Captured internally by codex CLI provider to update SessionManager; excluded from external SSE emission.
 export interface ProviderThreadStartedEvent {
   type: 'thread_started';
   threadId: string;
@@ -269,7 +244,7 @@ export type ProviderEvent =
   | ProviderDoneEvent
   | ProviderThreadStartedEvent;
 
-/** @deprecated ProviderEvent 사용 권장 */
+/** @deprecated Use ProviderEvent instead */
 export interface StreamChunk {
   type: 'delta' | 'done' | 'error';
   content?: string;
@@ -277,9 +252,7 @@ export interface StreamChunk {
   usage?: TokenUsage;
 }
 
-// --- StreamChunk ↔ ProviderEvent 어댑터 ---
-
-/** StreamChunk를 ProviderEvent[]로 변환 (레거시 파서 호환) */
+/** Converts StreamChunk to ProviderEvent[] for legacy parser compatibility */
 export function streamChunkToEvents(chunk: StreamChunk): ProviderEvent[] {
   const events: ProviderEvent[] = [];
   switch (chunk.type) {
@@ -297,7 +270,7 @@ export function streamChunkToEvents(chunk: StreamChunk): ProviderEvent[] {
   return events;
 }
 
-/** ProviderEvent를 StreamChunk로 변환 (레거시 소비자 호환, lossy) */
+/** Converts ProviderEvent to StreamChunk for legacy consumer compatibility (lossy) */
 export function eventToStreamChunk(event: ProviderEvent): StreamChunk | null {
   switch (event.type) {
     case 'text_delta':     return { type: 'delta', content: event.text };
@@ -306,57 +279,41 @@ export function eventToStreamChunk(event: ProviderEvent): StreamChunk | null {
     case 'done':           return { type: 'done' };
     case 'tool_use':       return null;
     case 'usage':          return null;
-    case 'thread_started': return null;  // 내부 이벤트, 외부 SSE 변환 대상 아님
+    case 'thread_started': return null;  // Internal event, not emitted over SSE
     default:               return null;
   }
 }
 
 export type HealthStatus = 'healthy' | 'unhealthy' | 'unknown';
 
-// Generic CLI 프로바이더 설정 (대시보드에서 커스텀 프로바이더 등록용)
-// ProviderConfigYaml과 동일 구조로 확장 (순환 참조 방지: config.ts가 provider.ts를 이미 import함)
+// Generic CLI provider configuration for registering custom CLIs from the dashboard.
 export interface GenericCliProviderConfig extends PluginProviderConfig {
-  // 프롬프트 전달 방식
   prompt_mode: 'stdin' | 'arg';
-  prompt_arg_template?: string;  // arg 모드: e.g. ["--", "{prompt}"]
-
-  // CLI 인자 템플릿 - 플레이스홀더: {model}, {prompt}
-  args_template: string[];   // e.g. ["-m", "{model}", "--format", "json"]
-
-  // 출력 파싱
+  prompt_arg_template?: string;  // e.g. ["--", "{prompt}"]
+  args_template: string[];       // e.g. ["-m", "{model}", "--format", "json"]
   output_mode: 'plain_text' | 'json_field';
-  output_json_content_field?: string;   // json_field 모드: "result", "response", etc.
-
-  // 스트리밍
+  output_json_content_field?: string;
   streaming_enabled: boolean;
   stream_args_template?: string[];
-  stream_content_field?: string;   // ndjson content field
-  stream_done_indicator?: string;  // e.g. "[DONE]"
-
-  // 헬스 체크
-  health_check_args?: string[];   // default: ["--version"]
-
-  // 메타
+  stream_content_field?: string;
+  stream_done_indicator?: string;
+  health_check_args?: string[];
   display_name: string;
   description?: string;
 }
 
-// HTTP Provider 설정 (OpenAI 호환 API용)
+// HTTP Provider configuration for OpenAI-compatible APIs
 export interface HttpProviderConfig {
   enabled: boolean;
-  base_url: string;           // e.g. "http://localhost:8080"
-  api_key?: string;           // Authorization: Bearer {api_key}
+  base_url: string;
+  api_key?: string;
   custom_headers?: Record<string, string>;
   default_model: string;
-  default_max_tokens?: number; // 클라이언트 미지정 시 기본 max_tokens (기본: 65536)
+  default_max_tokens?: number; // Default max_tokens when omitted by client (default: 65536)
   max_concurrent: number;
   timeout_ms: number;
-
-  // 이 프로바이더가 서빙하는 엔드포인트 타입. 미지정 시 'chat'으로 간주(레거시 호환).
-  // Playground는 이 값이 'chat'이 아니면 채팅 테스트 불가 안내를 표시한다.
+  // Serving endpoint type; defaults to 'chat' for legacy compatibility.
   endpoint_type?: EndpointType;
-
-  // 메타
   display_name: string;
   description?: string;
 }

@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-// ProviderName은 string 타입
 import type { ProviderRegistry } from '../../providers/provider-registry.js';
 import { inferEndpointTypeFromName } from '@star-cliproxy/shared';
 import { HttpProvider } from '../../providers/http-provider.js';
@@ -33,15 +32,14 @@ export function registerTestModelRoute(
 
     const startTime = Date.now();
 
-    // HTTP 프로바이더는 config.endpoint_type에 맞는 실제 호출로 테스트.
-    // 레거시(endpoint_type 미저장)는 모델명 이름 휴리스틱으로 폴백(저장 없이 동작).
+    // Test HTTP providers with payloads matching endpoint_type; fall back to name heuristics for legacy configs
     const httpEndpointType = provider instanceof HttpProvider
       ? (provider.getHttpConfig().endpoint_type
           ?? inferEndpointTypeFromName(actual_model, provider.getHttpConfig().default_model)
           ?? 'chat')
       : null;
 
-    // chat이 아닌 플러그인 프로바이더(images, tts 등)는 프롬프트 분기
+    // Non-chat plugin providers (images, tts, etc.) require domain-appropriate prompts
     const endpointTypes = (provider as unknown as { endpointTypes?: string[] }).endpointTypes;
     const isNonChat = endpointTypes && !endpointTypes.includes('chat');
     const testPrompt = isNonChat && endpointTypes.includes('images')
@@ -69,7 +67,7 @@ export function registerTestModelRoute(
           messages: [{ role: 'user', content: testPrompt }],
           model: actual_model,
           stream: false,
-          // 백엔드의 max_total_tokens 제한과 무관하게 통과하도록 작은 값 사용
+          // Use small token budget to avoid hitting backend max_total_tokens constraints
           maxTokens: 64,
         });
         response = result.content.substring(0, 200);

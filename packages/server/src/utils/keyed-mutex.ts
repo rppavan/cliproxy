@@ -1,13 +1,9 @@
-// 키 단위 비동기 뮤텍스
-// 같은 키의 작업은 FIFO 직렬화, 다른 키는 병렬 허용.
-// codex app-server thread당 turn 직렬화(#24)에 사용.
-
+// Key-scoped async mutex that serializes tasks with the same key in FIFO order while allowing concurrency across keys (#24).
 export class KeyedMutex {
-  // 키별 대기 체인의 꼬리. 새 작업은 이전 꼬리가 해소된 뒤 진입한다.
+  // Tail of the per-key waiting promise chain.
   private tails = new Map<string, Promise<void>>();
 
-  // 락 획득. 반환된 함수를 호출하면 해제된다 (멱등).
-  // 호출 측은 반드시 try/finally로 해제를 보장할 것.
+  // Acquire lock. Returns an idempotent release function. Callers must release in try/finally.
   async acquire(key: string): Promise<() => void> {
     const prev = this.tails.get(key) ?? Promise.resolve();
 
@@ -25,14 +21,13 @@ export class KeyedMutex {
       if (released) return;
       released = true;
       releaseGate();
-      // 내 뒤에 대기자가 없으면 맵에서 제거 (메모리 누수 방지)
+      // Clean up map entry when no subsequent tasks are waiting to prevent memory leaks.
       if (this.tails.get(key) === tail) {
         this.tails.delete(key);
       }
     };
   }
 
-  // 락을 잡고 fn 실행 후 자동 해제
   async runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const release = await this.acquire(key);
     try {

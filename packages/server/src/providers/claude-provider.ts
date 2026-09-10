@@ -10,7 +10,7 @@ import { executeChannel, executeStreamChannel, type ChannelExecutorConfig } from
 import { mergeProviderConfig } from './provider-override.js';
 import { channelBridgeManager } from '../channel-bridge/manager.js';
 
-// channel-worker 모드 health: bridge /health 확인 (CLI 존재가 아니라 실제 처리 가능 여부)
+// channel-worker health check: verify bridge /health endpoint to ensure it can process requests
 async function pingBridgeHealth(baseUrl: string, apiKey?: string): Promise<boolean> {
   try {
     const url = `${baseUrl.replace(/\/+$/, '')}/health`;
@@ -30,14 +30,13 @@ async function pingBridgeHealth(baseUrl: string, apiKey?: string): Promise<boole
 export class ClaudeProvider extends BaseProvider {
   readonly name = 'claude' as const;
 
-  // SDK 모드 전용: 세션 매니저 (lazy 초기화)
+  // SDK mode session manager (lazy initialization)
   private sessionManager: ClaudeSdkSessionManager | null = null;
 
   constructor(config: ProviderConfigYaml) {
     super(config);
     this.initParser();
 
-    // SDK 모드일 때 세션 매니저 초기화
     if (this.isSDKMode) {
       const ttl = config.sdk_options?.session_ttl_ms;
       this.sessionManager = new ClaudeSdkSessionManager(ttl);
@@ -78,7 +77,7 @@ export class ClaudeProvider extends BaseProvider {
 
   private buildChannelConfig(options: ExecuteOptions, effective: ProviderConfigYaml): ChannelExecutorConfig {
     const channelOptions = { ...(effective.channel_options ?? {}) };
-    // managed bridge일 때 endpoint_url을 비워두면 bridge_port로 자동 유추 (대시보드 안내와 일치)
+    // For managed bridge without explicit endpoint_url, derive from bridge_port
     if (!channelOptions.endpoint_url && channelOptions.managed) {
       channelOptions.endpoint_url = `http://127.0.0.1:${channelOptions.bridge_port ?? 8788}`;
     }
@@ -89,7 +88,7 @@ export class ClaudeProvider extends BaseProvider {
     };
   }
 
-  // --- CLI 모드 전용 메서드 (기존 동작 유지) ---
+  // --- CLI mode methods ---
 
   protected override getStdinData(options: ExecuteOptions): string {
     const { userPrompt } = convertMessages(options.messages);
@@ -102,10 +101,10 @@ export class ClaudeProvider extends BaseProvider {
     const model = options.model || effective.default_model;
 
     // non-streaming: json, streaming: stream-json --verbose
-    // stream-json은 --verbose 필수 (Claude CLI 요구사항)
+    // stream-json requires --verbose per Claude CLI specifications
     const format = options.stream ? 'stream-json' : 'json';
     const args: string[] = [
-      '-p', '-', // stdin에서 프롬프트 읽기 (ARG_MAX 제한 우회)
+      '-p', '-', // Read prompt from stdin to avoid ARG_MAX limits
       '--output-format', format,
       '--model', model,
       '--max-turns', '50',
@@ -119,15 +118,14 @@ export class ClaudeProvider extends BaseProvider {
       args.push('--system-prompt', systemPrompt);
     }
 
-    // Claude CLI는 --max-tokens를 지원하지 않음 (API 전용 옵션)
+    // Claude CLI does not support --max-tokens (API-only option)
 
-    // 추론 수준 주입 (사용자가 extra_args로 직접 넣지 않은 경우에만)
+    // Inject reasoning effort unless explicitly provided in extra_args
     if (options.reasoningEffort && !effective.extra_args.includes('--effort')) {
       args.push('--effort', options.reasoningEffort);
     }
 
-    // OpenAI response_format.json_schema → claude --json-schema (중첩 schema만).
-    // 사용자가 extra_args로 스키마를 고정했다면 --effort와 같은 정책으로 그 값을 존중한다.
+    // Pass response_format.json_schema to claude --json-schema unless user pinned schema via extra_args
     const schemaArg = schemaArgument(options.chatResponseFormat);
     const userHasSchema = effective.extra_args.some(
       (arg) => arg === '--json-schema' || arg.startsWith('--json-schema='),
@@ -141,27 +139,25 @@ export class ClaudeProvider extends BaseProvider {
     return args;
   }
 
-  // CLI 모드에서만 --json-schema를 줄 수 있다. sdk/channel-worker는 별도 실행기를 타므로
-  // 미지원으로 선언하고 라우트가 X-Unsupported-Params로 알리게 한다.
+  // Only CLI mode supports --json-schema directly; sdk/channel-worker use separate executors.
   override supportsResponseFormat(format: ChatResponseFormat): boolean {
     if (format.type !== 'json_schema') return false;
     return this.config.mode !== 'sdk' && this.config.mode !== 'channel-worker';
   }
 
-  // Claude json 출력에서 결과 추출
   protected override parseNonStreamOutput(stdout: string, options?: ExecuteOptions): ExecuteResult {
     const trimmed = stdout.trim();
     if (!trimmed) {
       return { content: '', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, finishReason: 'error' };
     }
 
-    // JSON 파싱만 try로 감싼다 — 아래 structured output 검증 실패는 텍스트 폴백이 아니라
-    // 그대로 던져야 한다(스키마를 만족하지 않는 문자열을 구조화 응답으로 넘기지 않기 위해).
+    // Wrap only JSON parsing in try/catch so schema validation errors throw directly
+    // rather than incorrectly falling back to plain text.
     let data: Record<string, unknown> & { usage?: Record<string, number> };
     try {
       data = JSON.parse(trimmed);
     } catch {
-      // JSON 파싱 실패 시 텍스트로 처리
+      // Fall back to plain text on JSON parse failure
       return {
         content: trimmed,
         usage: { promptTokens: 0, completionTokens: Math.ceil(trimmed.length / 4), totalTokens: Math.ceil(trimmed.length / 4) },
@@ -169,9 +165,8 @@ export class ClaudeProvider extends BaseProvider {
       };
     }
 
-    // 스키마를 요청했으면 result 텍스트가 아니라 structured_output을 정본으로 쓴다.
-    // (claude는 내부 StructuredOutput tool round-trip으로 값을 만들며, result가 항상
-    //  스키마를 만족한다는 보장은 CLI 버전에 의존한다.)
+    // When schema is requested, use structured_output as the canonical output
+    // rather than result text (Claude CLI populates structured_output via an internal tool).
     const content = wantsSchemaEnforcement(options?.chatResponseFormat)
       ? requireStructuredOutput(data.structured_output, 'claude', 'structured_output')
       : (data.result as string | undefined) ?? '';
@@ -191,8 +186,6 @@ export class ClaudeProvider extends BaseProvider {
     };
   }
 
-  // --- mode 기반 분기 ---
-
   private sdkDebugArgs(model: string, meta?: SdkMeta): string[] {
     const args = ['[sdk-mode]', `model=${model}`];
     if (meta) {
@@ -208,7 +201,7 @@ export class ClaudeProvider extends BaseProvider {
     if (effective.mode === 'sdk') {
       const result = await executeSdk(options, this.buildSdkConfig(options, effective, options.clientKey));
       const model = options.model || effective.default_model;
-      // SDK 모드에서도 onDebug 콜백 호출 (디버그 로그 PENDING 방지)
+      // Invoke onDebug callback in SDK mode to prevent debug log from remaining PENDING
       options.onDebug?.({
         cliArgs: this.sdkDebugArgs(model, result.sdkMeta),
         stdout: result.content,
@@ -224,8 +217,8 @@ export class ClaudeProvider extends BaseProvider {
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
     const effective = this.getEffectiveConfig(options);
 
-    // 스키마 요청은 완성된 구조화 값 1회 emit으로 통일한다 (structured-output.ts 주석 참고).
-    // 실측(claude 2.1.228): delta는 프로즈를 흘리고 최종 result에만 스키마 준수 값이 담긴다.
+    // Emit schema requests as a single completed structured output (Claude CLI streams prose
+    // deltas and only populates the schema-conforming value in the final result).
     if (shouldBufferStream(options.chatResponseFormat) && effective.mode !== 'sdk' && effective.mode !== 'channel-worker') {
       const result = await this.execute({ ...options, stream: false });
       yield { type: 'text_delta', text: result.content };
@@ -247,7 +240,7 @@ export class ClaudeProvider extends BaseProvider {
         yield event;
       }
       const model = options.model || effective.default_model;
-      // SDK 모드에서도 onDebug 콜백 호출 (디버그 로그 PENDING 방지)
+      // Invoke onDebug callback in SDK mode to prevent debug log from remaining PENDING
       options.onDebug?.({
         cliArgs: this.sdkDebugArgs(model, streamMeta),
         streamLines: sdkLines,
@@ -262,34 +255,34 @@ export class ClaudeProvider extends BaseProvider {
   }
 
   override async checkHealth(): Promise<HealthStatus> {
-    // channel-worker 모드는 CLI 존재가 아니라 실제 처리 주체인 bridge의 상태를 본다.
+    // In channel-worker mode, check bridge availability rather than local CLI binary presence
     if (this.config.mode === 'channel-worker') {
       const ch = this.config.channel_options ?? {};
       if (ch.managed) {
-        // 내장 bridge: manager가 띄운 프로세스의 running + healthy
+        // Managed bridge: check running and healthy status of managed process
         const status = await channelBridgeManager.status();
         return status.running && status.healthy ? 'healthy' : 'unhealthy';
       }
-      // 외부 bridge: endpoint(없으면 bridge_port로 유추) /health ping
+      // External bridge: ping /health endpoint
       const baseUrl = ch.endpoint_url ?? `http://127.0.0.1:${ch.bridge_port ?? 8788}`;
       return (await pingBridgeHealth(baseUrl, ch.api_key)) ? 'healthy' : 'unhealthy';
     }
-    // cli / sdk 모드: CLI 바이너리 존재 확인 (SDK도 내부적으로 CLI를 스폰)
+    // CLI / SDK mode: check CLI binary existence (SDK spawns CLI internally)
     return super.checkHealth();
   }
 
-  // 런타임 설정 변경 시 세션 매니저 재초기화
+  // Reinitialize session manager on runtime config change
   override updateConfig(partial: Partial<ProviderConfigYaml>): void {
     const wasSDKMode = this.isSDKMode;
     super.updateConfig(partial);
 
-    // CLI → SDK 전환 시 세션 매니저 생성
+    // Instantiate session manager when transitioning to SDK mode
     if (!wasSDKMode && this.isSDKMode && !this.sessionManager) {
       const ttl = this.config.sdk_options?.session_ttl_ms;
       this.sessionManager = new ClaudeSdkSessionManager(ttl);
     }
 
-    // SDK → CLI 전환 시 세션 매니저 해제
+    // Destroy session manager when transitioning away from SDK mode
     if (wasSDKMode && !this.isSDKMode && this.sessionManager) {
       this.sessionManager.destroy();
       this.sessionManager = null;
@@ -300,7 +293,7 @@ export class ClaudeProvider extends BaseProvider {
     const models: ProviderModelInfo[] = [];
     const seen = new Set<string>();
 
-    // 1. ~/.claude/settings.json 확인
+    // 1. Check ~/.claude/settings.json
     try {
       const home = process.env.CLAUDE_CONFIG_DIR || process.env.HOME;
       if (home) {
@@ -325,7 +318,7 @@ export class ClaudeProvider extends BaseProvider {
       }
     } catch { /* ignore error reading settings */ }
 
-    // 2. Claude Code 공식 지원 모델들 추가
+    // 2. Add officially supported Claude Code models
     const standardModels = [
       'claude-opus-5',
       'claude-sonnet-5',

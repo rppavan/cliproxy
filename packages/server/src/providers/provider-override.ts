@@ -1,17 +1,15 @@
 import type { ProviderConfigYaml, ProviderOverrides } from '@star-cliproxy/shared';
 import { CLAUDE_OVERRIDE_ALLOWED_KEYS, CODEX_OVERRIDE_ALLOWED_KEYS } from '@star-cliproxy/shared';
 
-// codex 화이트리스트 키 셋 (런타임 검색용)
 const CODEX_ALLOWED_SET = new Set<string>(CODEX_OVERRIDE_ALLOWED_KEYS);
 const CLAUDE_ALLOWED_SET = new Set<string>(CLAUDE_OVERRIDE_ALLOWED_KEYS);
 
-// 화이트리스트 매핑: provider명 → 허용 dotted key 셋
 const ALLOWED_BY_PROVIDER: Record<string, Set<string>> = {
   claude: CLAUDE_ALLOWED_SET,
   codex: CODEX_ALLOWED_SET,
 };
 
-// 화이트리스트 외 키를 발견했을 때 한 번만 경고 (provider+key 단위 dedupe)
+// Deduplicate warnings per provider and key
 const warnedKeys = new Set<string>();
 
 function warnUnallowed(provider: string, key: string): void {
@@ -21,10 +19,10 @@ function warnUnallowed(provider: string, key: string): void {
   console.warn(`[provider-override] '${key}' is not in the whitelist for provider '${provider}' — ignored.`);
 }
 
-// ProviderOverrides를 base ProviderConfigYaml에 deep merge.
-// 화이트리스트(provider별) 외 키는 silent drop + warn 로그. 동일 dedupeKey는 1회만 경고.
-// 배열(extra_args)은 **교체** (append 정책은 추후 확장).
-// 결과는 항상 새 객체 — base와 overrides 인스턴스 모두 변형되지 않음.
+// Deep-merges ProviderOverrides into base ProviderConfigYaml.
+// Non-whitelisted keys are silently dropped with a deduplicated warning log.
+// Arrays (e.g. extra_args) are replaced rather than appended.
+// Always returns a new object without mutating base or overrides.
 export function mergeProviderConfig(
   base: ProviderConfigYaml,
   overrides: ProviderOverrides | undefined,
@@ -36,7 +34,7 @@ export function mergeProviderConfig(
 
   const allowed = ALLOWED_BY_PROVIDER[provider];
   if (!allowed) {
-    // 해당 provider에 화이트리스트 정의 없음 — 전체 drop + warn
+    // No whitelist defined for provider; drop all and warn
     warnUnallowed(provider, '*');
     return { ...base };
   }
@@ -148,7 +146,7 @@ export function mergeProviderConfig(
   return merged;
 }
 
-// 테스트 전용 — warn 캐시 초기화
+// Test helper to reset warning deduplication cache
 export function _resetOverrideWarnCache(): void {
   warnedKeys.clear();
 }

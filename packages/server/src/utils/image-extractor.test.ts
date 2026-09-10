@@ -53,7 +53,6 @@ describe('prepareGeminiPrompt', () => {
     expect(result.prompt).toContain(`@${filePath}`);
     expect(result.prompt).not.toContain('base64,');
 
-    // 실제 파일 내용 = 디코드된 PNG 바이트
     const written = await readFile(filePath);
     expect(written.equals(Buffer.from(PNG_BASE64, 'base64'))).toBe(true);
 
@@ -109,7 +108,7 @@ describe('prepareGeminiPrompt', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'x' },
-          { type: 'image_url' }, // url 없음
+          { type: 'image_url' },
         ],
       },
     ];

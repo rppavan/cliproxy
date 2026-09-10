@@ -8,11 +8,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-// 이미지 첨부 모드일 때 -p 인자에 들어가는 프롬프트 텍스트의 안전 한도.
-// macOS ARG_MAX = 1MB. 여유를 두어 800KB로 제한.
+// Safety threshold for prompt text passed via `-p` in image-attachment mode.
+// macOS ARG_MAX is 1MB; bounded to 800KB to allow margin.
 const MAX_PROMPT_ARG_BYTES = 800_000;
 
-// gemini-provider 내부 컨텍스트: prepareGeminiPrompt 결과를 buildArgs/getStdinData에 전달
+// Internal context passing prepareGeminiPrompt result to buildArgs and getStdinData.
 interface GeminiExecuteContext {
   text: string;
   useArg: boolean;
@@ -33,7 +33,7 @@ export class GeminiProvider extends BaseProvider {
   protected override getStdinData(options: ExecuteOptions): string | undefined {
     const ctx = (options as GeminiExecuteOptions).__geminiPrompt;
     if (ctx) {
-      // 이미지 모드(-p): stdin 미사용. 텍스트 모드: 그대로 stdin.
+      // Omit stdin in image mode (-p); pass prompt via stdin in text mode.
       return ctx.useArg ? undefined : ctx.text;
     }
     return convertMessagesToSinglePrompt(options.messages);
@@ -51,15 +51,15 @@ export class GeminiProvider extends BaseProvider {
 
     const ctx = (options as GeminiExecuteOptions).__geminiPrompt;
     if (ctx?.useArg) {
-      // 이미지 첨부 모드: prompt 텍스트(@<path> 포함)를 -p 인자로 전달
+      // Pass prompt containing @<path> image references via -p argument.
       args.push('-p', ctx.text);
     }
     return args;
   }
 
-  // shell redirect로 stdout 완전 수집
-  // Gemini CLI는 stdout이 pipe일 때 8KB 버퍼를 마지막에 flush하지 않아 데이터 잘림 발생
-  // 파일 리다이렉트(> file)로 우회하면 프로세스 종료 시 OS가 파일을 완전히 flush함
+  // Collect full stdout via shell redirection.
+  // Gemini CLI does not flush its trailing 8KB buffer when stdout is a pipe, causing truncation.
+  // Redirecting to a file (> file) ensures the OS flushes all remaining output on process termination.
   override async execute(options: ExecuteOptions): Promise<ExecuteResult> {
     const { ext, tempFiles } = await this.prepareImageContext(options);
     try {
@@ -72,18 +72,16 @@ export class GeminiProvider extends BaseProvider {
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
     const { ext, tempFiles } = await this.prepareImageContext(options);
     try {
-      // BaseProvider.executeStream을 그대로 사용 — getStdinData/buildArgs가 ctx를 본다
       yield* super.executeStream(ext);
     } finally {
       await Promise.allSettled(tempFiles.map((f) => unlink(f)));
     }
   }
 
-  // 메시지에서 이미지를 임시 파일로 추출하고 컨텍스트 토큰을 옵션에 첨부한다.
   private async prepareImageContext(options: ExecuteOptions): Promise<{ ext: GeminiExecuteOptions; tempFiles: string[] }> {
     const { prompt, tempFiles, hasImages } = await prepareGeminiPrompt(options.messages);
 
-    // ARG_MAX 보호: -p 인자에 실릴 prompt가 너무 길면 이미지 첨부를 포기하고 텍스트 모드로 폴백
+    // Protect against ARG_MAX limits; fall back to text-only stdin if prompt exceeds threshold.
     if (hasImages && Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_ARG_BYTES) {
       await Promise.allSettled(tempFiles.map((f) => unlink(f)));
       console.warn(`[gemini] prompt too large for -p mode (${Buffer.byteLength(prompt, 'utf8')} bytes); falling back to text-only stdin`);
@@ -101,7 +99,6 @@ export class GeminiProvider extends BaseProvider {
     return { ext, tempFiles };
   }
 
-  // 기존 execute 본체 — shell redirect 흐름은 동일, 옵션만 ext 사용
   private async executeOnce(options: GeminiExecuteOptions): Promise<ExecuteResult> {
     const args = this.buildArgs({ ...options, stream: false });
     const tmpFile = join(tmpdir(), `gemini-out-${randomBytes(8).toString('hex')}.json`);
@@ -110,9 +107,8 @@ export class GeminiProvider extends BaseProvider {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        // shell을 통해 stdout을 파일로 리다이렉트
-        // { shell: true }로 Node.js가 플랫폼별 셸 자동 선택 (macOS: sh, Windows: cmd.exe)
-        // null byte 제거: 일부 셸에서 문자열 종단자로 해석될 수 있음
+        // Redirect stdout to file via shell to avoid pipe buffer truncation.
+        // Strip null bytes to prevent early string termination across different shells.
         const isWin = process.platform === 'win32';
         const shellEscape = isWin
           ? (s: string) => '"' + s.replace(/\x00/g, '').replace(/"/g, '\\"') + '"'
@@ -128,7 +124,6 @@ export class GeminiProvider extends BaseProvider {
         const stderrChunks: Buffer[] = [];
         child.stderr?.on('data', (data: Buffer) => stderrChunks.push(data));
 
-        // stdin으로 프롬프트 전달 후 닫기
         if (stdinData) {
           child.stdin?.write(stdinData);
         }
@@ -139,7 +134,6 @@ export class GeminiProvider extends BaseProvider {
           reject(new Error(`gemini CLI timed out after ${this.config.timeout_ms}ms`));
         }, this.config.timeout_ms);
 
-        // 클라이언트 취소 시 프로세스 정리
         if (options.signal) {
           options.signal.addEventListener('abort', () => {
             clearTimeout(timeout);
@@ -169,39 +163,36 @@ export class GeminiProvider extends BaseProvider {
       options.onDebug?.({ cliArgs: [this.config.cli_path, ...args], stdout });
       return this.parseNonStreamOutput(stdout);
     } catch (err) {
-      // 에러 시에도 부분 출력이 파일에 있을 수 있음
+      // Capture partial output from file even when process reports an error.
       try {
         const stdout = await readFile(tmpFile, 'utf-8');
         if (stdout.trim()) {
           options.onDebug?.({ cliArgs: [this.config.cli_path, ...args], stdout });
           return this.parseNonStreamOutput(stdout);
         }
-      } catch { /* 파일 없음 */ }
+      } catch { /* file missing */ }
       options.onDebug?.({ cliArgs: [this.config.cli_path, ...args], stderr: (err as Error).message });
       throw err;
     } finally {
-      try { await unlink(tmpFile); } catch { /* 이미 없으면 무시 */ }
+      try { await unlink(tmpFile); } catch { /* ignore if already missing */ }
     }
   }
 
-  // Gemini json 출력에서 결과 추출
   protected override parseNonStreamOutput(stdout: string): ExecuteResult {
     const trimmed = stdout.trim();
     if (!trimmed) {
       return { content: '', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, finishReason: 'error' };
     }
 
-    // JSON 파싱 우선 시도
     try {
       const data = JSON.parse(trimmed);
 
       let content = data.response ?? data.result ?? data.text ?? data.content ?? '';
-      // 리터럴 \n 복원
+      // Restore literal escaped newlines.
       if (typeof content === 'string' && content.includes('\\n')) {
         content = content.replace(/\\n/g, '\n');
       }
 
-      // stats에서 토큰 정보 추출 시도
       const { inputTokens, outputTokens } = this.extractTokenUsage(data);
 
       return {
@@ -214,7 +205,7 @@ export class GeminiProvider extends BaseProvider {
         finishReason: 'stop',
       };
     } catch {
-      // JSON 실패 → JSON 객체 추출 시도
+      // Fall back to extracting embedded JSON object.
       const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
@@ -232,7 +223,7 @@ export class GeminiProvider extends BaseProvider {
         } catch { /* fallback */ }
       }
 
-      // "response" 필드를 정규식으로 추출
+      // Extract "response" field via regex if JSON parsing fails.
       const responseMatch = trimmed.match(/"response"\s*:\s*"([\s\S]*)$/);
       if (responseMatch) {
         let content = responseMatch[1];
@@ -250,14 +241,11 @@ export class GeminiProvider extends BaseProvider {
         };
       }
 
-      // 최종 fallback
       return super.parseNonStreamOutput(stdout);
     }
   }
 
-  // Gemini stats 구조에서 토큰 사용량 추출
   private extractTokenUsage(data: Record<string, unknown>): { inputTokens: number; outputTokens: number } {
-    // 직접 usage 필드
     const usage = data.usage as Record<string, number> | undefined;
     if (usage) {
       return {
@@ -266,7 +254,7 @@ export class GeminiProvider extends BaseProvider {
       };
     }
 
-    // Gemini stats 구조: { stats: { models: { "model-name": { tokens: { input, candidates, total } } } } }
+    // Gemini stats schema: { stats: { models: { "<model>": { tokens: { input, candidates, total } } } } }
     const stats = data.stats as Record<string, unknown> | undefined;
     if (stats?.models && typeof stats.models === 'object') {
       const models = stats.models as Record<string, Record<string, unknown>>;
@@ -283,8 +271,6 @@ export class GeminiProvider extends BaseProvider {
     return { inputTokens: 0, outputTokens: 0 };
   }
 
-  // 스트리밍: -o stream-json을 pipe로 실시간 파싱
-  // Gemini는 delta=true 이벤트로 진짜 실시간 스트리밍 지원
-  // BaseProvider.executeStream()이 readline + parser로 처리하므로 오버라이드 불필요
-  // (buildArgs에서 stream=true일 때 stream-json 포맷 지정)
+  // Streaming uses `-o stream-json` piped to BaseProvider.executeStream().
+  // Gemini CLI emits delta=true events for real-time output.
 }

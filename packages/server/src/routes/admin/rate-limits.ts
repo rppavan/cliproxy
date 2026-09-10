@@ -17,13 +17,11 @@ export function registerRateLimitsRoutes(
   rateLimiter: RateLimiter,
   defaultConfig: RateLimitConfig,
 ): void {
-  // 현재 Rate Limits 조회
   app.get('/admin/rate-limits', async (_request, reply) => {
     const config = await loadRateLimitsFromDb(defaultConfig);
     return reply.send(config);
   });
 
-  // Rate Limits 업데이트 (DB 저장 + 인메모리 즉시 반영)
   app.put<{ Body: RateLimitsBody }>('/admin/rate-limits', async (request, reply) => {
     const body = request.body;
 
@@ -31,7 +29,6 @@ export function registerRateLimitsRoutes(
       return reply.status(400).send({ error: { message: 'global.rpm and global.rpd are required as numbers.' } });
     }
 
-    // perProvider를 동적으로 구성 (빌트인 + 플러그인 프로바이더 모두 지원)
     const perProvider: Record<string, { rpm: number }> = {};
     if (body.perProvider) {
       for (const [name, val] of Object.entries(body.perProvider)) {
@@ -47,17 +44,13 @@ export function registerRateLimitsRoutes(
       perProvider,
     };
 
-    // DB에 저장
     await saveRateLimitsToDb(newConfig);
-
-    // 인메모리 즉시 반영
     rateLimiter.updateConfig(newConfig);
 
     return reply.send({ success: true, config: newConfig });
   });
 }
 
-// DB에서 Rate Limits 로드 (없으면 기본값 반환)
 export async function loadRateLimitsFromDb(defaultConfig: RateLimitConfig): Promise<RateLimitConfig> {
   const db = getDatabase();
   const results = await db

@@ -79,7 +79,6 @@ export default function LogsPage() {
           <span className="text-xs text-gray-400 dark:text-gray-500">{total} {t('logs.entries')}</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* 기간별 삭제 */}
           <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg px-2 py-1">
             <select
               value={deleteDays}
@@ -171,7 +170,6 @@ export default function LogsPage() {
         </table>
       </div>
 
-      {/* 페이지네이션 */}
       {totalPages > 1 && (
         <Pagination currentPage={page} totalPages={totalPages} onPageChange={(p) => load(p)} />
       )}
@@ -187,7 +185,6 @@ function formatLogTime(dateStr: string): string {
   return d.toLocaleString();
 }
 
-// 페이지 번호 목록 생성
 function getPageNumbers(current: number, total: number): (number | '...')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i);
   const pages: (number | '...')[] = [0];

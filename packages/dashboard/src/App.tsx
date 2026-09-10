@@ -15,7 +15,6 @@ import SettingsPage from './pages/SettingsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import PlaygroundPage from './pages/PlaygroundPage';
 
-// 번역 키 기반 네비게이션
 const navItems = [
   { to: '/', labelKey: 'nav.dashboard', icon: '~' },
   { to: '/playground', labelKey: 'nav.playground', icon: '^' },
@@ -60,7 +59,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen">
-      {/* 사이드바 */}
       <nav className="w-56 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col">
         <div className="p-4 border-b border-gray-200 dark:border-gray-800">
           <h1 className="text-lg font-bold text-blue-600 dark:text-blue-400">star-cliproxy</h1>
@@ -86,10 +84,8 @@ export default function App() {
           ))}
         </div>
 
-        {/* 하단: 언어 토글 + 테마 토글 */}
         <div className="p-3 border-t border-gray-200 dark:border-gray-800 space-y-2">
           <div className="flex items-center justify-between">
-            {/* 언어 토글 */}
             <button
               onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors
@@ -100,7 +96,6 @@ export default function App() {
               {lang === 'ko' ? 'EN' : '한'}
             </button>
 
-            {/* 테마 토글 */}
             <button
               onClick={toggleTheme}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors
@@ -109,12 +104,10 @@ export default function App() {
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {theme === 'dark' ? (
-                // 해 아이콘 (라이트 모드로 전환)
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
                 </svg>
               ) : (
-                // 달 아이콘 (다크 모드로 전환)
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
                 </svg>
@@ -127,9 +120,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* 메인 콘텐츠 */}
       <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-950 flex flex-col">
-        {/* 상단 바 */}
         <div className="flex items-center justify-between gap-4 px-6 pt-4 pb-2">
           {authEnabled === false ? (
             <div className="flex items-center gap-2">

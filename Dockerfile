@@ -1,26 +1,15 @@
-# star-cliproxy 컨테이너 이미지 (멀티 타겟)
-#
-#  서버:      docker build -t star-cliproxy:local .
-#  대시보드:  docker build -t star-cliproxy-dashboard:local --target dashboard .
-#
-# 실행:
-#  - 서버: config.yaml(server.host: 0.0.0.0)을 /app/config.yaml로 마운트
-#  - 대시보드: CLIPROXY_UPSTREAM 환경변수로 서버 주소 지정 (기본 http://cliproxy:8300)
-# 비고:
-#  - CLI 프로바이더(claude/codex 등)는 호스트 인증 의존이라 컨테이너에선 비활성 권장.
-#  - server 패키지는 현재 tsc 전체 빌드가 통과하지 않는 상태(테스트/실험 코드 타입 오류)라
-#    호스트 dev 실행과 동일하게 tsx 런타임으로 구동한다. shared만 tsc 빌드.
-
-# ── 공통 베이스: 의존성 + 소스 ──────────────────────────
+# Multi-target container image:
+#   Server:    docker build -t star-cliproxy:local .
+#   Dashboard: docker build -t star-cliproxy-dashboard:local --target dashboard .
+# Note: CLI providers rely on host authentication, so they should be disabled in containers.
 FROM node:22-alpine AS base
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/dashboard/package.json packages/dashboard/
-# node-pty는 linux/arm64 prebuild를 제공하지 않아 node-gyp 컴파일이 필요하다.
-# 빌드 툴체인은 .build-deps로 묶어 설치 직후 제거하고, 컴파일된 .node가 런타임에
-# 링크하는 libstdc++만 영구 설치해 최종 이미지 크기를 유지한다.
+# node-pty lacks linux/arm64 prebuilds and requires node-gyp compilation.
+# Build toolchain is removed after install; libstdc++ is retained for runtime linking.
 RUN apk add --no-cache libstdc++ \
  && apk add --no-cache --virtual .build-deps python3 make g++ \
  && npm ci \
@@ -29,31 +18,24 @@ COPY tsconfig*.json ./
 COPY packages/shared packages/shared
 RUN npm run build --workspace=packages/shared
 
-# ── 서버 (기본 타겟) ────────────────────────────────────
 FROM base AS server
 COPY packages/server packages/server
-# 비root 실행: node 이미지의 내장 node 사용자(uid 1000)로 권한 강등.
-# SQLite/로그 기록 경로(data, logs)만 소유권 부여 (node_modules는 read-only 사용).
+# Drop privileges to uid 1000 and grant write access only to SQLite/log paths.
 RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
 USER node
 EXPOSE 8300
-# busybox wget(alpine 내장)으로 헬스 엔드포인트 확인.
-# `localhost`가 아니라 `127.0.0.1`을 쓴다 — busybox wget은 /etc/hosts의 ::1을 먼저 시도하는데
-# 서버는 0.0.0.0(IPv4)에만 바인딩하므로 localhost로는 Connection refused가 난다.
+# busybox wget attempts IPv6 ::1 first for localhost, but the server only binds IPv4 (0.0.0.0).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8300/health || exit 1
 CMD ["npx", "tsx", "packages/server/src/index.ts"]
 
-# ── 대시보드 빌드 ───────────────────────────────────────
 FROM base AS dashboard-build
 COPY packages/dashboard packages/dashboard
 RUN npm run build --workspace=packages/dashboard
 
-# ── 대시보드 (nginx 정적 서빙 + API 프록시) ─────────────
 FROM nginx:alpine AS dashboard
 COPY --from=dashboard-build /app/packages/dashboard/dist /usr/share/nginx/html
-# /admin, /v1, /health → cliproxy 서버 프록시 (Vite dev 프록시와 동일 구성)
-# nginx 변수($host 등)는 ${...}가 아니므로 envsubst 대상에서 제외됨 (NGINX_ENVSUBST_FILTER)
+# NGINX_ENVSUBST_FILTER prevents envsubst from replacing nginx variables like $host.
 COPY <<'CONF' /etc/nginx/templates/default.conf.template
 server {
     listen 80;
@@ -67,5 +49,5 @@ ENV CLIPROXY_UPSTREAM=http://cliproxy:8300
 ENV NGINX_ENVSUBST_FILTER=CLIPROXY_UPSTREAM
 EXPOSE 80
 
-# 기본 타겟 = 서버
 FROM server
+

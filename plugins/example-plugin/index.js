@@ -1,6 +1,3 @@
-// 예제 플러그인: echo 프로바이더
-// 입력 메시지를 그대로 반환하는 테스트용 프로바이더
-
 /** @type {import('@star-cliproxy/shared').CliproxyPlugin} */
 export default {
   name: 'echo',

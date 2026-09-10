@@ -8,17 +8,13 @@ import type { HealthChecker } from '../../services/health-checker.js';
 import type { QueueManager } from '../../services/queue.js';
 import { GenericCliProvider } from '../../providers/generic-cli-provider.js';
 
-// DB 키 접두사
 const GENERIC_PROVIDER_PREFIX = 'generic_provider:';
 const PROVIDER_CONFIG_PREFIX = 'provider_config:';
 
-// 빌트인 프로바이더 이름 (사용 불가)
 const BUILTIN_PROVIDER_NAMES = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode'];
 
-// 프로바이더 이름 유효성 검사 패턴: 소문자·숫자·하이픈, 길이 2-30
 const PROVIDER_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
-// cli_path 허용 문자 검사: 영숫자, -, _, ., /, \, :
 const SAFE_CLI_PATH = /^[a-zA-Z0-9_\-./\\:]+$/;
 
 function validateProviderName(name: string): string | null {
@@ -38,7 +34,6 @@ function validateCliPath(cliPath: string): string | null {
   return null;
 }
 
-// DB에서 제네릭 프로바이더 설정 로드
 async function loadGenericProviderFromDb(
   name: string,
 ): Promise<GenericCliProviderConfig | null> {
@@ -58,7 +53,6 @@ async function loadGenericProviderFromDb(
   }
 }
 
-// DB에 제네릭 프로바이더 설정 저장 (upsert)
 async function saveGenericProviderToDb(
   name: string,
   config: GenericCliProviderConfig,
@@ -94,7 +88,6 @@ export function registerGenericProviderRoutes(
   app: FastifyInstance,
   deps: GenericProviderDeps,
 ): void {
-  // 전체 제네릭 프로바이더 목록 조회
   app.get('/admin/generic-providers', async (_request, reply) => {
     const db = getDatabase();
     const rows = await db
@@ -115,7 +108,6 @@ export function registerGenericProviderRoutes(
     return reply.send(providers);
   });
 
-  // 특정 제네릭 프로바이더 설정 조회
   app.get<{ Params: { name: string } }>(
     '/admin/generic-providers/:name',
     async (request, reply) => {
@@ -132,13 +124,11 @@ export function registerGenericProviderRoutes(
     },
   );
 
-  // 제네릭 프로바이더 생성
   app.post<{ Body: { name: string } & GenericCliProviderConfig }>(
     '/admin/generic-providers',
     async (request, reply) => {
       const { name, ...configData } = request.body;
 
-      // 이름 유효성 검사
       if (!name) {
         return reply.status(400).send({ error: { message: 'Provider name is required.' } });
       }
@@ -147,21 +137,18 @@ export function registerGenericProviderRoutes(
         return reply.status(400).send({ error: { message: nameError } });
       }
 
-      // 빌트인 프로바이더 이름 충돌 확인
       if (BUILTIN_PROVIDER_NAMES.includes(name)) {
         return reply.status(409).send({
           error: { message: `Cannot use built-in provider name: "${name}".` },
         });
       }
 
-      // 이미 등록된 프로바이더 이름 확인
       if (deps.registry.has(name)) {
         return reply.status(409).send({
           error: { message: `Provider "${name}" is already registered.` },
         });
       }
 
-      // cli_path 유효성 검사
       if (!configData.cli_path) {
         return reply.status(400).send({ error: { message: 'cli_path is required.' } });
       }
@@ -170,7 +157,6 @@ export function registerGenericProviderRoutes(
         return reply.status(400).send({ error: { message: cliPathError } });
       }
 
-      // 필수 필드 기본값 처리
       const config: GenericCliProviderConfig = {
         enabled: configData.enabled ?? true,
         cli_path: configData.cli_path,
@@ -193,29 +179,25 @@ export function registerGenericProviderRoutes(
         ...(configData.working_dir !== undefined && { working_dir: configData.working_dir }),
       };
 
-      // DB에 저장
       await saveGenericProviderToDb(name, config);
 
-      // 런타임 등록
       const provider = new GenericCliProvider(name, config);
       deps.registry.register(provider);
       deps.queueManager.addQueue(name, config.max_concurrent);
 
-      // 비동기 헬스 체크 트리거 (응답 지연 방지)
+      // Trigger async health check to avoid delaying response
       deps.healthChecker.checkProvider(name).catch(() => {});
 
       return reply.status(201).send({ name, config });
     },
   );
 
-  // 제네릭 프로바이더 설정 수정
   app.put<{ Params: { name: string }; Body: Partial<GenericCliProviderConfig> }>(
     '/admin/generic-providers/:name',
     async (request, reply) => {
       const { name } = request.params;
       const partial = request.body;
 
-      // 기존 설정 로드
       const existing = await loadGenericProviderFromDb(name);
       if (!existing) {
         return reply.status(404).send({
@@ -223,7 +205,6 @@ export function registerGenericProviderRoutes(
         });
       }
 
-      // cli_path 변경 시 유효성 검사
       if (partial.cli_path !== undefined) {
         const cliPathError = validateCliPath(partial.cli_path);
         if (cliPathError) {
@@ -231,13 +212,10 @@ export function registerGenericProviderRoutes(
         }
       }
 
-      // 기존 설정과 병합
       const updated: GenericCliProviderConfig = { ...existing, ...partial };
-
-      // DB 업데이트
       await saveGenericProviderToDb(name, updated);
 
-      // 구조적 변경 여부 판단 (재등록 필요 여부)
+      // Check if changes require re-registering the provider instance
       const structuralFields: Array<keyof GenericCliProviderConfig> = [
         'args_template',
         'prompt_mode',
@@ -256,16 +234,13 @@ export function registerGenericProviderRoutes(
       );
 
       if (hasStructuralChange && deps.registry.has(name)) {
-        // 기존 프로바이더 제거 후 새 인스턴스 등록
         deps.registry.unregister(name);
         const newProvider = new GenericCliProvider(name, updated);
         deps.registry.register(newProvider);
       } else if (deps.registry.has(name)) {
-        // 기본 필드만 런타임 업데이트
         deps.registry.updateProviderConfig(name, partial);
       }
 
-      // max_concurrent 변경 시 큐 동시 처리 수 갱신
       if (partial.max_concurrent !== undefined) {
         deps.queueManager.updateConcurrency(name, partial.max_concurrent);
       }
@@ -274,20 +249,17 @@ export function registerGenericProviderRoutes(
     },
   );
 
-  // 제네릭 프로바이더 삭제
   app.delete<{ Params: { name: string } }>(
     '/admin/generic-providers/:name',
     async (request, reply) => {
       const { name } = request.params;
 
-      // 빌트인 프로바이더 삭제 차단
       if (BUILTIN_PROVIDER_NAMES.includes(name)) {
         return reply.status(403).send({
           error: { message: `Cannot delete built-in provider: "${name}".` },
         });
       }
 
-      // DB에 존재하는지 확인
       const existing = await loadGenericProviderFromDb(name);
       if (!existing) {
         return reply.status(404).send({
@@ -297,22 +269,18 @@ export function registerGenericProviderRoutes(
 
       const db = getDatabase();
 
-      // DB에서 제거 (generic_provider:{name} 키)
       await db
         .delete(settings)
         .where(eq(settings.key, `${GENERIC_PROVIDER_PREFIX}${name}`));
 
-      // DB에서 제거 (provider_config:{name} 오버라이드 키)
       await db
         .delete(settings)
         .where(eq(settings.key, `${PROVIDER_CONFIG_PREFIX}${name}`));
 
-      // providerHealth 테이블 정리
       await db
         .delete(providerHealth)
         .where(eq(providerHealth.provider, name));
 
-      // 런타임에서 제거
       if (deps.registry.has(name)) {
         deps.registry.unregister(name);
       }
@@ -322,7 +290,6 @@ export function registerGenericProviderRoutes(
     },
   );
 
-  // 등록 전 테스트 — 임시 GenericCliProvider 인스턴스를 생성하여 실행
   app.post<{ Body: { name?: string } & GenericCliProviderConfig }>(
     '/admin/generic-providers/test',
     async (request, reply) => {
@@ -358,7 +325,6 @@ export function registerGenericProviderRoutes(
         ...(configData.working_dir !== undefined && { working_dir: configData.working_dir }),
       };
 
-      // 임시 프로바이더 인스턴스로 테스트
       const testProvider = new GenericCliProvider(providerName, config);
       const model = config.default_model || '';
       const startTime = Date.now();

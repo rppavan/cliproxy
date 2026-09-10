@@ -12,7 +12,7 @@ import {
   type DebugLog,
 } from '../api/client';
 
-// OpenAI messages → Claude CLI용 stdin 프롬프트 (convertMessages 미러링)
+// Mirrors convertMessages to reconstruct Claude CLI stdin prompt for copyable debug commands.
 function rebuildClaudeStdin(messages: Array<{ role: string; content: string }>): string {
   const nonSystem = messages.filter((m) => m.role !== 'system');
   if (nonSystem.length === 1 && nonSystem[0].role === 'user') {
@@ -27,7 +27,7 @@ function rebuildClaudeStdin(messages: Array<{ role: string; content: string }>):
   return parts.join('\n\n');
 }
 
-// OpenAI messages → Gemini/Codex용 단일 프롬프트 (convertMessagesToSinglePrompt 미러링)
+// Mirrors convertMessagesToSinglePrompt to reconstruct Gemini/Codex stdin prompt.
 function rebuildSinglePrompt(messages: Array<{ role: string; content: string }>): string {
   const nonSystem = messages.filter((m) => m.role !== 'system');
   const systemMsg = messages.find((m) => m.role === 'system');
@@ -51,28 +51,23 @@ function rebuildSinglePrompt(messages: Array<{ role: string; content: string }>)
   return userPrompt;
 }
 
-// 셸 인자 이스케이프
 function escapeShellArg(a: string): string {
   if (a.includes("'")) return `"${a.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')}"`;
   if (a.includes(' ') || a.includes('"') || a.includes('\\') || a.includes('$') || a.includes('`')) return `'${a}'`;
   return a;
 }
 
-// OS 감지
 const isWindows = navigator.platform.startsWith('Win');
 
-// stdin 파이프 명령 생성 (OS별 분기)
-// macOS/Linux: printf 'text' | cmd
-// Windows: echo text | cmd
 function wrapWithStdinPipe(stdinData: string, cmd: string): string {
   if (isWindows) {
-    // PowerShell/CMD: echo로 파이프, 줄바꿈 제거 (한 줄 명령)
+    // Windows CMD/PowerShell strips newlines from piped input for one-line execution.
     const escaped = stdinData
       .replace(/\n/g, ' ')
       .replace(/"/g, '\\"');
     return `echo "${escaped}" | ${cmd}`;
   }
-  // macOS/Linux: printf로 줄바꿈 보존
+  // macOS/Linux uses printf to preserve newlines.
   const escaped = stdinData
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "'\\''")
@@ -80,9 +75,8 @@ function wrapWithStdinPipe(stdinData: string, cmd: string): string {
   return `printf '${escaped}' | ${cmd}`;
 }
 
-// 디버그 로그에서 터미널에 한 줄로 붙여넣기 가능한 실행 명령 생성
+// Generate copyable terminal command from debug log for local reproduction.
 function buildTerminalCommand(log: { cliArgs: string | null; httpRequest?: string | null; provider: string; requestMessages?: string | null }): string {
-  // HTTP Provider → curl 명령
   if (log.httpRequest) {
     return buildCurlCommand(log.httpRequest);
   }
@@ -93,7 +87,7 @@ function buildTerminalCommand(log: { cliArgs: string | null; httpRequest?: strin
     const args = JSON.parse(log.cliArgs) as string[];
     const provider = log.provider;
 
-    // cliArgs 첫 번째가 CLI 바이너리인지 확인 (신규 로그는 포함, 기존 로그는 미포함)
+    // Older logs omitted CLI binary from cliArgs; prepend provider if first element is a flag.
     const firstIsFlag = args[0]?.startsWith('-');
     const cmdArgs = firstIsFlag ? [provider, ...args] : args;
 
@@ -119,7 +113,7 @@ function buildTerminalCommand(log: { cliArgs: string | null; httpRequest?: strin
     }
 
     if (provider === 'codex') {
-      // Codex: stdin으로 프롬프트 전달 (- 플래그)
+      // Codex receives prompt via stdin (- flag).
       const cmd = cmdArgs.map(escapeShellArg).join(' ');
       if (messages) {
         return wrapWithStdinPipe(rebuildSinglePrompt(messages), cmd);
@@ -128,21 +122,20 @@ function buildTerminalCommand(log: { cliArgs: string | null; httpRequest?: strin
     }
 
     if (provider === 'agy') {
-      // agy 1.1.7: prompt가 이미 -p 인수에 직접 들어 있어 stdin 파이프 불필요
+      // agy receives prompt inline via -p; stdin pipe unnecessary.
       return cmdArgs.map(escapeShellArg).join(' ');
     }
 
     if (provider === 'grok') {
-      // grok: prompt가 이미 -p 인수에 직접 들어 있어 stdin 파이프 불필요
+      // grok receives prompt inline via -p; stdin pipe unnecessary.
       return cmdArgs.map(escapeShellArg).join(' ');
     }
 
     if (provider === 'kimi') {
-      // Kimi Code: prompt가 이미 -p 인수에 직접 들어 있어 stdin 파이프 불필요
+      // Kimi receives prompt inline via -p; stdin pipe unnecessary.
       return cmdArgs.map(escapeShellArg).join(' ');
     }
 
-    // 기타 프로바이더
     const cmd = cmdArgs.map(escapeShellArg).join(' ');
     if (messages) {
       return wrapWithStdinPipe(rebuildSinglePrompt(messages), cmd);
@@ -153,7 +146,6 @@ function buildTerminalCommand(log: { cliArgs: string | null; httpRequest?: strin
   }
 }
 
-// HTTP 요청을 curl 명령으로 변환
 function buildCurlCommand(httpRequestJson: string): string {
   try {
     const req = JSON.parse(httpRequestJson) as {
@@ -179,7 +171,6 @@ interface HttpReqInfo {
   body: unknown;
 }
 
-// macOS/Linux: curl -X POST 'url' -H 'header' -d 'body'
 function buildCurlUnix(req: HttpReqInfo): string {
   const parts: string[] = ['curl'];
 
@@ -201,7 +192,6 @@ function buildCurlUnix(req: HttpReqInfo): string {
   return parts.join(' \\\n  ');
 }
 
-// Windows PowerShell: curl.exe -X POST "url" -H "header" -d "body"
 function buildCurlWindows(req: HttpReqInfo): string {
   const parts: string[] = ['curl.exe'];
 
@@ -224,7 +214,6 @@ function buildCurlWindows(req: HttpReqInfo): string {
   return parts.join(' `\n  ');
 }
 
-// ms를 가독성 좋은 단위로 변환
 function formatLatency(ms: number | null): string {
   if (ms === null || ms === undefined) return '-';
   if (ms < 1000) return `${ms}ms`;
@@ -234,7 +223,6 @@ function formatLatency(ms: number | null): string {
   return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
 }
 
-// cliArgs JSON에서 session= 값 추출
 function extractSessionFromArgs(cliArgs: string | null): { sessionId: string | null; reused: boolean } {
   if (!cliArgs) return { sessionId: null, reused: false };
   try {
@@ -269,7 +257,6 @@ export default function DebugPage() {
   const PAGE_SIZE = 20;
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  // 검색어 debounce (400ms)
   useEffect(() => {
     debounceRef.current = setTimeout(() => {
       setDebouncedSearch(searchText);
@@ -410,12 +397,10 @@ export default function DebugPage() {
         </div>
       )}
 
-      {/* 디버그 설정 */}
       {config && (
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 space-y-4">
           <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{t('debug.debugCapture')}</h3>
 
-          {/* 전역 토글 */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{t('debug.globalToggle')}</p>
@@ -424,7 +409,6 @@ export default function DebugPage() {
             <ToggleSwitch enabled={config.global} onToggle={toggleGlobal} />
           </div>
 
-          {/* 모델별 토글 */}
           {models.length > 0 && (
             <div className="border-t border-gray-200 dark:border-gray-800 pt-3 space-y-2">
               <p className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">{t('debug.perModel')}</p>
@@ -455,7 +439,6 @@ export default function DebugPage() {
         </div>
       )}
 
-      {/* 로그 헤더 */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -486,7 +469,6 @@ export default function DebugPage() {
           </div>
         </div>
 
-        {/* 필터 바: 검색 + 스코프 + 모델 */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1 max-w-md">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -511,7 +493,6 @@ export default function DebugPage() {
             )}
           </div>
 
-          {/* 검색 스코프 토글 */}
           <div className="flex rounded border border-gray-300 dark:border-gray-700 overflow-hidden">
             {(['all', 'request', 'response'] as const).map((scope) => (
               <button
@@ -528,7 +509,6 @@ export default function DebugPage() {
             ))}
           </div>
 
-          {/* 모델 필터 */}
           <select
             value={filterModel}
             onChange={(e) => handleFilterChange(e.target.value)}
@@ -542,7 +522,6 @@ export default function DebugPage() {
         </div>
       </div>
 
-      {/* 전체 선택 */}
       {logs.length > 0 && (
         <div className="flex items-center gap-2 px-1">
           <input
@@ -555,7 +534,6 @@ export default function DebugPage() {
         </div>
       )}
 
-      {/* 로그 목록 */}
       <div className="space-y-2">
         {logs.map((log) => (
           <DebugLogEntry
@@ -578,12 +556,10 @@ export default function DebugPage() {
         )}
       </div>
 
-      {/* 페이징 */}
       {totalPages > 1 && (
         <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
       )}
 
-      {/* 세션 히스토리 모달 */}
       {sessionModalId && (
         <SessionModal
           sessionId={sessionModalId}
@@ -643,7 +619,6 @@ function DebugLogEntry({
 
   return (
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
-      {/* 요약 행 */}
       <div className="w-full flex items-center gap-3 px-4 py-3">
         <input
           type="checkbox"
@@ -666,7 +641,6 @@ function DebugLogEntry({
             {log.reasoningEffort}
           </span>
         )}
-        {/* 세션 배지 (SDK 모드) */}
         {(() => {
           const { sessionId, reused } = extractSessionFromArgs(log.cliArgs);
           if (!sessionId) return null;
@@ -739,10 +713,8 @@ function DebugLogEntry({
         </button>
       </div>
 
-      {/* 상세 패널 */}
       {expanded && (
         <div className="border-t border-gray-200 dark:border-gray-800 p-4 space-y-4">
-          {/* CLI 인자 */}
           {log.cliArgs && (
             <DetailSection title={t('debug.cliCommand')}>
               <pre className="text-green-600 dark:text-green-300 whitespace-pre-wrap break-all">
@@ -756,7 +728,6 @@ function DebugLogEntry({
             </DetailSection>
           )}
 
-          {/* 요청 메시지 */}
           {log.requestMessages && (
             <DetailSection title={t('debug.requestMessages')}>
               <pre className="text-yellow-600 dark:text-yellow-200 whitespace-pre-wrap break-all">
@@ -765,7 +736,6 @@ function DebugLogEntry({
             </DetailSection>
           )}
 
-          {/* Raw 출력 */}
           {log.rawStdout && (
             <DetailSection title={t('debug.rawStdout')}>
               <pre className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-all">{formatNdjson(log.rawStdout)}</pre>
@@ -778,7 +748,6 @@ function DebugLogEntry({
             </DetailSection>
           )}
 
-          {/* HTTP Request — curl 명령 + 원본 */}
           {log.httpRequest && (
             <>
               <DetailSection title="curl">
@@ -794,7 +763,6 @@ function DebugLogEntry({
             </>
           )}
 
-          {/* HTTP Response */}
           {log.httpResponse && (
             <DetailSection title={t('debug.httpResponse')}>
               <pre className="text-purple-600 dark:text-purple-300 whitespace-pre-wrap break-all">
@@ -803,7 +771,6 @@ function DebugLogEntry({
             </DetailSection>
           )}
 
-          {/* HTTP Stream Lines */}
           {log.httpStreamLines && (
             <DetailSection title={t('debug.httpStreamLines')}>
               <pre className="text-indigo-600 dark:text-indigo-300 whitespace-pre-wrap break-all">
@@ -812,14 +779,12 @@ function DebugLogEntry({
             </DetailSection>
           )}
 
-          {/* Raw 응답 (파싱 전) */}
           {log.rawResponseText && (
             <DetailSection title={t('debug.rawResponse')}>
               <pre className="text-amber-600 dark:text-amber-300 whitespace-pre-wrap break-all">{log.rawResponseText}</pre>
             </DetailSection>
           )}
 
-          {/* 파싱된 콘텐츠 */}
           {log.parsedContent && (
             <DetailSection title={t('debug.parsedResponse')}>
               <pre className="text-blue-600 dark:text-blue-200 whitespace-pre-wrap break-words">{log.parsedContent}</pre>
@@ -836,14 +801,12 @@ function DebugLogEntry({
             </DetailSection>
           )}
 
-          {/* 토큰 사용량 */}
           {log.tokenUsage && (
             <DetailSection title={t('debug.tokenUsage')}>
               <pre className="text-cyan-600 dark:text-cyan-300 whitespace-pre-wrap">{formatJson(log.tokenUsage)}</pre>
             </DetailSection>
           )}
 
-          {/* 에러 */}
           {log.errorMessage && (
             <DetailSection title={t('debug.error')}>
               <pre className="text-red-500 dark:text-red-400">{log.errorMessage}</pre>
@@ -870,7 +833,6 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
-// 세션 히스토리 모달: 동일 세션 ID를 가진 로그를 시간순으로 표시
 function SessionModal({ sessionId, logs, onClose }: {
   sessionId: string;
   logs: DebugLog[];
@@ -878,7 +840,6 @@ function SessionModal({ sessionId, logs, onClose }: {
 }) {
   const { t } = useTranslation();
 
-  // 현재 페이지 로그에서 동일 세션 필터
   const sessionLogs = logs
     .filter((log) => {
       const { sessionId: sid } = extractSessionFromArgs(log.cliArgs);
@@ -901,7 +862,6 @@ function SessionModal({ sessionId, logs, onClose }: {
         className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 헤더 */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <div>
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -924,7 +884,6 @@ function SessionModal({ sessionId, logs, onClose }: {
           </button>
         </div>
 
-        {/* 로그 목록 */}
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
           {sessionLogs.length === 0 ? (
             <p className="text-xs text-gray-400 dark:text-gray-600 text-center py-8">
@@ -935,7 +894,6 @@ function SessionModal({ sessionId, logs, onClose }: {
               const { reused } = extractSessionFromArgs(log.cliArgs);
               return (
                 <div key={log.id} className="flex items-start gap-3 group">
-                  {/* 타임라인 */}
                   <div className="flex flex-col items-center pt-1">
                     <span className={`w-2.5 h-2.5 rounded-full border-2 ${
                       log.status === 'success'
@@ -948,7 +906,6 @@ function SessionModal({ sessionId, logs, onClose }: {
                       <div className="w-px flex-1 bg-gray-200 dark:bg-gray-700 mt-1" />
                     )}
                   </div>
-                  {/* 내용 */}
                   <div className="flex-1 pb-3">
                     <div className="flex items-center gap-2">
                       <span className={`text-[10px] font-bold font-mono ${statusColor(log.status)}`}>
@@ -996,7 +953,6 @@ function SessionModal({ sessionId, logs, onClose }: {
           )}
         </div>
 
-        {/* 푸터 */}
         <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-800 flex justify-end">
           <button
             onClick={onClose}
@@ -1037,17 +993,15 @@ function ToggleSwitch({
   );
 }
 
-// 바이트 수를 사람이 읽기 쉬운 단위로 변환
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-// LLM 요청/응답 페이로드 크기 계산
 function calcPayloadSizes(log: DebugLog): { req: string; res: string } {
   const reqBytes = log.requestMessages?.length ?? 0;
-  // rawResponseText(HTTP) > rawStdout(CLI) > parsedContent 순으로 우선
+  // Response size priority: rawResponseText (HTTP) > rawStdout (CLI) > parsedContent.
   const resBytes = log.rawResponseText?.length ?? log.rawStdout?.length ?? log.parsedContent?.length ?? 0;
   return { req: formatBytes(reqBytes), res: formatBytes(resBytes) };
 }
@@ -1059,7 +1013,6 @@ function formatTime(dateStr: string): string {
   return d.toLocaleTimeString();
 }
 
-// 개별 디버그 로그를 텍스트 파일로 내보내기
 function exportDebugLog(log: DebugLog): void {
   const divider = '='.repeat(60);
   const sections: string[] = [];
@@ -1161,7 +1114,7 @@ function isImageUrl(text: string): boolean {
   }
 }
 
-// NDJSON (줄바꿈 구분 JSON) 포맷팅 — 각 줄을 개별 JSON으로 파싱 후 들여쓰기
+// Formats NDJSON lines with indentation while preserving readability.
 function formatNdjson(str: string): string {
   const lines = str.split('\n').filter((l) => l.trim());
   const formatted = lines.map((line) => {
@@ -1179,20 +1132,18 @@ function formatJson(str: string): string {
   try {
     const parsed = JSON.parse(str);
     const formatted = JSON.stringify(parsed, null, 2);
-    // 리터럴 \n을 실제 줄바꿈으로 변환
+    // Convert literal \n to real newline.
     return formatted.replace(/\\n/g, '\n');
   } catch {
-    // JSON이 아니면 리터럴 \n만 변환
+    // Fall back to converting literal \n if unparseable.
     return str.replace(/\\n/g, '\n');
   }
 }
 
-// 페이지 번호 목록 생성 (현재 페이지 주변 + 처음/끝)
 function getPageNumbers(current: number, total: number): (number | '...')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i);
 
   const pages: (number | '...')[] = [];
-  // 항상 첫 페이지
   pages.push(0);
 
   const start = Math.max(1, current - 1);
@@ -1202,7 +1153,6 @@ function getPageNumbers(current: number, total: number): (number | '...')[] {
   for (let i = start; i <= end; i++) pages.push(i);
   if (end < total - 2) pages.push('...');
 
-  // 항상 마지막 페이지
   pages.push(total - 1);
   return pages;
 }

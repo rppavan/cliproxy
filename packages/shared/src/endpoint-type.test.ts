@@ -31,7 +31,7 @@ describe('inferEndpointTypeFromName', () => {
 
 describe('effectiveEndpointType', () => {
   it('명시적 타입이 휴리스틱보다 우선', () => {
-    // 이름은 embeddings로 보이지만 명시값 chat이 우선
+    // Explicit type takes precedence even if name suggests embeddings heuristics
     expect(effectiveEndpointType('chat', 'kure-v1')).toBe('chat');
   });
 

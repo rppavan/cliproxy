@@ -33,8 +33,6 @@ import {
   isReasoningEffort,
 } from '@star-cliproxy/shared';
 
-// 사용자 입력 reasoning_effort 정규화: 문자열을 trim+lowercase 후 화이트리스트 검증.
-// 알 수 없는 값은 silently 무시 (provider가 default 동작).
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
   if (typeof value !== 'string') return undefined;
   const normalized = value.trim().toLowerCase();
@@ -42,9 +40,6 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
   return isReasoningEffort(normalized) ? normalized : undefined;
 }
 
-// model_mappings.provider_overrides 정규화: 화이트리스트 키만 통과.
-// 화이트리스트 검증과 deep merge는 런타임에서 mergeProviderConfig가 수행하지만,
-// 여기서는 명확한 타입/구조만 보장한다 (잘못된 타입 자체는 silently drop).
 function normalizeProviderOverrides(value: unknown, provider?: string): ProviderOverrides | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
@@ -87,8 +82,12 @@ function normalizeProviderOverrides(value: unknown, provider?: string): Provider
   if (isClaude && raw.channel_options && typeof raw.channel_options === 'object' && !Array.isArray(raw.channel_options)) {
     const rawChannel = raw.channel_options as Record<string, unknown>;
     const channel: NonNullable<ProviderOverrides['channel_options']> = {};
+    if (typeof rawChannel.managed === 'boolean') channel.managed = rawChannel.managed;
+    if (typeof rawChannel.bridge_port === 'number' && rawChannel.bridge_port > 0) channel.bridge_port = rawChannel.bridge_port;
+    if (typeof rawChannel.bridge_command === 'string' && rawChannel.bridge_command.trim()) channel.bridge_command = rawChannel.bridge_command;
+    if (typeof rawChannel.auto_start === 'boolean') channel.auto_start = rawChannel.auto_start;
     if (typeof rawChannel.endpoint_url === 'string' && rawChannel.endpoint_url.trim()) channel.endpoint_url = rawChannel.endpoint_url;
-    if (typeof rawChannel.api_key === 'string' && rawChannel.api_key.trim()) channel.api_key = rawChannel.api_key;
+    if (typeof rawChannel.api_key === 'string') channel.api_key = rawChannel.api_key;
     if (typeof rawChannel.poll_interval_ms === 'number' && rawChannel.poll_interval_ms > 0) channel.poll_interval_ms = rawChannel.poll_interval_ms;
     if (typeof rawChannel.result_timeout_ms === 'number' && rawChannel.result_timeout_ms > 0) channel.result_timeout_ms = rawChannel.result_timeout_ms;
     if (rawChannel.response_schema && typeof rawChannel.response_schema === 'object' && !Array.isArray(rawChannel.response_schema)) {
@@ -102,7 +101,6 @@ function normalizeProviderOverrides(value: unknown, provider?: string): Provider
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-// 환경변수 치환: "${VAR_NAME}" → process.env.VAR_NAME
 function substituteEnvVars(text: string): string {
   return text.replace(/\$\{(\w+)\}/g, (_, varName) => {
     return process.env[varName] ?? '';
@@ -120,19 +118,14 @@ function defaultProviderConfig(cliPath: string, defaultModel: string): ProviderC
   };
 }
 
-// 빌트인 프로바이더 기본값
 const BUILTIN_DEFAULTS: Record<string, { cliPath: string; defaultModel: string }> = {
   claude: { cliPath: 'claude', defaultModel: 'claude-sonnet-4-6' },
   codex: { cliPath: 'codex', defaultModel: '' },
   copilot: { cliPath: 'copilot', defaultModel: 'claude-sonnet-4-6' },
   gemini: { cliPath: 'gemini', defaultModel: 'gemini-2.5-pro' },
-  // agy의 자동 모델 선택 placeholder. actual model pin은 model mapping에서 수행.
   agy: { cliPath: 'agy', defaultModel: 'antigravity' },
-  // xAI Grok Build CLI (`grok`) 0.2.112 기본 카탈로그
   grok: { cliPath: 'grok', defaultModel: 'grok-4.5' },
-  // Moonshot AI Kimi Code CLI. 모든 회원에게 제공되는 coding 모델을 안전한 기본값으로 사용.
   kimi: { cliPath: 'kimi', defaultModel: 'kimi-code/kimi-for-coding' },
-  // OpenCode CLI (`opencode`)
   opencode: { cliPath: 'opencode', defaultModel: 'opencode/muse-spark-1.3-contributor-free' },
 };
 
@@ -147,7 +140,6 @@ export function loadConfig(configPath?: string): AppConfig {
     rawConfig = parseYaml(substituted) ?? {};
   }
 
-  // Zod 스키마 검증 (#30): 잘못된 타입/범위는 기동 시점에 경로 포함 에러로 거부
   const parsed = rawConfigSchema.safeParse(rawConfig);
   if (!parsed.success) {
     throw new Error(
@@ -174,7 +166,6 @@ export function loadConfig(configPath?: string): AppConfig {
 
   const initialKeys = auth?.initial_keys ?? [];
 
-  // 빌트인 프로바이더 설정 병합
   const providerConfigs: Record<string, ProviderConfigYaml> = {};
   for (const [name, defaults] of Object.entries(BUILTIN_DEFAULTS)) {
     providerConfigs[name] = mergeProviderConfig(
@@ -182,7 +173,6 @@ export function loadConfig(configPath?: string): AppConfig {
     );
   }
 
-  // config.yaml providers 섹션의 커스텀 프로바이더 (빌트인 아닌 것)
   if (providers) {
     for (const [name, raw] of Object.entries(providers)) {
       if (name in BUILTIN_DEFAULTS) continue;
@@ -190,7 +180,6 @@ export function loadConfig(configPath?: string): AppConfig {
     }
   }
 
-  // Tool Bridge는 기존 프로바이더와 이름 공간을 공유하지만 별도 종류로 등록한다.
   const toolBridgeProviders: Record<string, ToolBridgeProviderConfig> = {};
   for (const [name, raw] of Object.entries(rawToolBridgeProviders ?? {})) {
     if (!raw) {
@@ -227,13 +216,11 @@ export function loadConfig(configPath?: string): AppConfig {
     providerConfigs[name] = config;
   }
 
-  // perProvider rate limits: 빌트인 + 커스텀 모두 동적으로 구성
   const perProviderConfig: Record<string, { rpm: number }> = {};
   for (const name of Object.keys(providerConfigs)) {
     perProviderConfig[name] = { rpm: perProvider?.[name]?.rpm ?? 20 };
   }
 
-  // 플러그인 엔트리 파싱
   const plugins: PluginEntry[] = (rawPlugins ?? []).map((p) => ({
     path: p.path,
     config: p.config as Partial<ProviderConfigYaml> | undefined,
@@ -252,7 +239,7 @@ export function loadConfig(configPath?: string): AppConfig {
       host: dashboard?.host ?? DEFAULT_HOST,
     },
     database: {
-      // DB 경로를 config.yaml이 있는 디렉토리 기준으로 해석
+      // Resolve database path relative to the config file directory.
       path: resolve(dirname(resolvedPath), database?.path ?? './data/cliproxy.db'),
     },
     auth: {
@@ -292,7 +279,6 @@ export function loadConfig(configPath?: string): AppConfig {
       reasoning_effort: normalizeReasoningEffort(m.reasoning_effort),
       provider_overrides: normalizeProviderOverrides(m.provider_overrides, m.provider),
     })) ?? [
-      // 초기 시드 — 프로바이더당 최대 2개. 대시보드에서 추가/수정 가능.
       { alias: 'claude-sonnet', provider: 'claude', actual_model: 'claude-sonnet-4-6' },
       { alias: 'claude-haiku', provider: 'claude', actual_model: 'claude-haiku-4-5-20251001' },
       { alias: 'gpt-5.5', provider: 'codex', actual_model: 'gpt-5.5' },
@@ -301,15 +287,11 @@ export function loadConfig(configPath?: string): AppConfig {
       { alias: 'copilot-gpt', provider: 'copilot', actual_model: 'gpt-5.4' },
       { alias: 'gemini-pro', provider: 'gemini', actual_model: 'gemini-2.5-pro' },
       { alias: 'gemini-flash', provider: 'gemini', actual_model: 'gemini-2.5-flash' },
-      // Antigravity: 자동 최상위 + 한 단계 가벼운 명시적 모델
       { alias: 'antigravity', provider: 'agy', actual_model: 'antigravity' },
       { alias: 'gemini-3.6-flash-high', provider: 'agy', actual_model: 'gemini-3.6-flash', reasoning_effort: 'high' },
-      // xAI Grok Build — 현재 카탈로그에 별도의 하위 모델이 없어 하나만 등록
       { alias: 'grok-4.5', provider: 'grok', actual_model: 'grok-4.5' },
-      // Moonshot AI Kimi Code — 최상위 K3 + 범용 coding 모델
       { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
       { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
-      // OpenCode CLI
       { alias: 'opencode-free', provider: 'opencode', actual_model: 'opencode/muse-spark-1.3-contributor-free' },
     ],
   };
@@ -326,11 +308,10 @@ function mergeToolBridgeProviderConfig(
     default_model: raw.default_model ?? base.default_model,
     max_concurrent: raw.max_concurrent ?? base.max_concurrent,
     timeout_ms: raw.timeout_ms ?? base.timeout_ms,
-    // 일반 CLI provider의 권한/agent flags를 브리지에 암묵적으로 전파하지 않는다.
-    // 필요한 비관리 플래그는 bridge 항목에 명시적으로 지정한다.
+    // Do not implicitly propagate base CLI provider flags to the bridge; unmanaged flags must be explicitly specified.
     extra_args: raw.extra_args ?? [],
     working_dir: raw.working_dir ?? base.working_dir,
-    // 브리지는 자체 실행 전략을 사용하므로 base provider의 sdk/app-server mode를 상속하지 않는다.
+    // Bridges use their own execution strategy and do not inherit base provider execution modes.
     mode: 'cli',
     sdk_options: undefined,
     channel_options: undefined,
@@ -351,7 +332,6 @@ function mergeProviderConfig(
   const defaults = defaultProviderConfig(cliPath, defaultModel);
   if (!raw) return defaults;
 
-  // App Server 옵션: transport만 기본값 주입 (나머지는 스키마 검증된 값 그대로)
   const appServerOptions = raw.app_server_options
     ? { ...raw.app_server_options, transport: raw.app_server_options.transport ?? 'stdio' as const }
     : undefined;

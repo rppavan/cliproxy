@@ -33,11 +33,11 @@ interface UpdateMappingBody {
   enabled?: boolean;
 }
 
-// cliproxy가 직접 관리하는 표준 필드 — extra_body로 덮어쓰지 못하도록 거부.
+// Cliproxy-managed standard fields; rejected to prevent extra_body from overriding them
 const RESERVED_EXTRA_BODY_KEYS = new Set([
   'model', 'messages', 'stream', 'max_tokens', 'temperature',
 ]);
-const MAX_EXTRA_BODY_BYTES = 4096;  // JSON 직렬화 후 크기 제한 (DB row bloat 방지)
+const MAX_EXTRA_BODY_BYTES = 4096; // Prevent DB row bloat after JSON serialization
 
 function parseExtraBodyInput(value: unknown): { ok: true; value: Record<string, unknown> | null | undefined } | { ok: false; reason: string } {
   if (value === undefined) return { ok: true, value: undefined };
@@ -58,7 +58,7 @@ function parseExtraBodyInput(value: unknown): { ok: true; value: Record<string, 
   return { ok: true, value: Object.keys(obj).length > 0 ? obj : null };
 }
 
-// boolean | null | undefined 입력 검증. NULL/undefined = 상속(전역 default).
+// Validates boolean | null | undefined. null/undefined inherits global default
 function parseIncludeReasoningInput(value: unknown): { ok: true; value: boolean | null | undefined } | { ok: false } {
   if (value === undefined) return { ok: true, value: undefined };
   if (value === null) return { ok: true, value: null };
@@ -66,9 +66,8 @@ function parseIncludeReasoningInput(value: unknown): { ok: true; value: boolean 
   return { ok: true, value };
 }
 
-// provider_overrides 입력 검증.
-// null → 명시적 unset, 화이트리스트 외 키 → silently drop, 잘못된 타입 → 400 트리거.
-// 깊이 제한: 최대 2단계 (cli_options 1단계 + 그 안의 필드).
+// Validates provider_overrides: null explicitly unsets, non-whitelisted keys are silently dropped,
+// invalid types trigger 400. Depth is limited to 2 levels (e.g. cli_options + nested fields).
 function parseProviderOverridesInput(value: unknown): { ok: true; value: ProviderOverrides | null | undefined } | { ok: false; reason: string } {
   if (value === undefined) return { ok: true, value: undefined };
   if (value === null) return { ok: true, value: null };
@@ -202,17 +201,14 @@ function parseProviderOverridesInput(value: unknown): { ok: true; value: Provide
   return { ok: true, value: Object.keys(out).length > 0 ? out : null };
 }
 
-// DB row에서 providerOverrides + extraBody (JSON string) → 객체 변환
 function rowWithParsedOverrides(row: Record<string, unknown>): Record<string, unknown> {
   const parsed: Record<string, unknown> = { ...row };
-  // providerOverrides
   const rawOverrides = row.providerOverrides;
   if (typeof rawOverrides === 'string' && rawOverrides.length > 0) {
     try { parsed.providerOverrides = JSON.parse(rawOverrides); } catch { parsed.providerOverrides = null; }
   } else {
     parsed.providerOverrides = null;
   }
-  // extraBody
   const rawExtra = row.extraBody;
   if (typeof rawExtra === 'string' && rawExtra.length > 0) {
     try { parsed.extraBody = JSON.parse(rawExtra); } catch { parsed.extraBody = null; }
@@ -222,8 +218,6 @@ function rowWithParsedOverrides(row: Record<string, unknown>): Record<string, un
   return parsed;
 }
 
-// 사용자 입력 reasoning_effort 정규화/검증.
-// null → 명시적 unset, 화이트리스트 외 값 → 400 트리거(undefined 반환 + flag).
 function parseReasoningEffortInput(value: unknown): { ok: true; value: ReasoningEffort | null | undefined } | { ok: false } {
   if (value === undefined) return { ok: true, value: undefined };
   if (value === null) return { ok: true, value: null };
@@ -240,7 +234,6 @@ export interface ModelMappingsRouteDeps {
 }
 
 export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMappingsRouteDeps): void {
-  // 목록 (기본: 활성화된 프로바이더의 매핑만 반환, ?all=true 시 전체 반환)
   app.get<{ Querystring: { all?: string } }>('/admin/model-mappings', async (request, reply) => {
     const db = getDatabase();
     const all = await db.select().from(modelMappings);
@@ -258,7 +251,6 @@ export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMa
     return reply.send(filtered.map(rowWithParsedOverrides));
   });
 
-  // 사용 가능한 전체 모델 목록 (대시보드 Playground, Debug, ApiGuide용: 실시간 CLI 모델 + 상단에 별칭 매핑)
   app.get('/admin/available-models', async (_request, reply) => {
     if (deps?.modelCatalog) {
       const models = await deps.modelCatalog.getModels();
@@ -269,7 +261,6 @@ export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMa
     return reply.send(all.map(rowWithParsedOverrides));
   });
 
-  // 생성
   app.post<{ Body: CreateMappingBody }>('/admin/model-mappings', async (request, reply) => {
     const { alias, provider, actual_model, display_name, reasoning_effort, provider_overrides, include_reasoning, extra_body, priority, enabled } = request.body;
 
@@ -284,35 +275,47 @@ export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMa
       });
     }
 
-    const parsedOverrides = parseProviderOverridesInput(provider_overrides);
-    if (!parsedOverrides.ok) {
-      return reply.status(400).send({ error: { message: parsedOverrides.reason } });
+    let parsedOverrides: ProviderOverrides | null | undefined;
+    if (provider_overrides !== undefined) {
+      const res = parseProviderOverridesInput(provider_overrides);
+      if (!res.ok) {
+        return reply.status(400).send({ error: { message: res.reason } });
+      }
+      parsedOverrides = res.value;
     }
 
-    const parsedInclude = parseIncludeReasoningInput(include_reasoning);
-    if (!parsedInclude.ok) {
-      return reply.status(400).send({ error: { message: 'include_reasoning must be boolean or null.' } });
+    let parsedIncludeReasoning: boolean | null | undefined;
+    if (include_reasoning !== undefined) {
+      const res = parseIncludeReasoningInput(include_reasoning);
+      if (!res.ok) {
+        return reply.status(400).send({ error: { message: 'include_reasoning must be boolean or null.' } });
+      }
+      parsedIncludeReasoning = res.value;
     }
 
-    const parsedExtra = parseExtraBodyInput(extra_body);
-    if (!parsedExtra.ok) {
-      return reply.status(400).send({ error: { message: parsedExtra.reason } });
+    let parsedExtraBody: Record<string, unknown> | null | undefined;
+    if (extra_body !== undefined) {
+      const res = parseExtraBodyInput(extra_body);
+      if (!res.ok) {
+        return reply.status(400).send({ error: { message: res.reason } });
+      }
+      parsedExtraBody = res.value;
     }
 
-    const db = getDatabase();
     const id = nanoid();
     const now = new Date().toISOString();
+    const db = getDatabase();
 
     await db.insert(modelMappings).values({
       id,
       alias,
       provider,
       actualModel: actual_model,
-      displayName: display_name,
+      displayName: display_name ?? null,
       reasoningEffort: parsedEffort.value ?? null,
-      providerOverrides: parsedOverrides.value ? JSON.stringify(parsedOverrides.value) : null,
-      includeReasoning: parsedInclude.value ?? null,
-      extraBody: parsedExtra.value ? JSON.stringify(parsedExtra.value) : null,
+      providerOverrides: parsedOverrides ? JSON.stringify(parsedOverrides) : null,
+      includeReasoning: parsedIncludeReasoning ?? null,
+      extraBody: parsedExtraBody ? JSON.stringify(parsedExtraBody) : null,
       priority: priority ?? 0,
       enabled: enabled ?? true,
       createdAt: now,
@@ -324,7 +327,6 @@ export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMa
     return reply.status(201).send(rowWithParsedOverrides(created[0]));
   });
 
-  // 수정
   app.put<{ Params: { id: string }; Body: UpdateMappingBody }>('/admin/model-mappings/:id', async (request, reply) => {
     const { id } = request.params;
     const body = request.body;
@@ -380,7 +382,6 @@ export function registerModelMappingsRoutes(app: FastifyInstance, deps?: ModelMa
     return reply.send(rowWithParsedOverrides(updated[0]));
   });
 
-  // 삭제
   app.delete<{ Params: { id: string } }>('/admin/model-mappings/:id', async (request, reply) => {
     const { id } = request.params;
     const db = getDatabase();

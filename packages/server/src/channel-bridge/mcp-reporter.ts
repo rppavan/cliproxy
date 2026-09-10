@@ -3,10 +3,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createConnection } from 'node:net';
 
-// claude interactive 세션에 --mcp-config로 attach되는 stdio MCP 서버.
-// 모델이 report_result tool을 호출하면 결과를 unix socket으로 bridge(PTY 실행기)에 전달한다.
-// 덕분에 bridge는 TUI 출력을 파싱하지 않고 구조화된 결과만 받는다.
-// (zod v3/v4 타입 충돌을 피하려고 고수준 McpServer 대신 저수준 Server + raw JSON Schema를 사용)
+// Stdio MCP server attached via --mcp-config to the interactive Claude session.
+// Sends report_result tool invocation outputs via Unix domain socket to the bridge runner,
+// receiving structured results without parsing TUI terminal output.
+// Uses low-level Server + raw JSON Schema to avoid Zod v3/v4 type conflicts.
 
 const SOCKET_PATH = process.env.BRIDGE_REPORT_SOCKET;
 
@@ -22,7 +22,7 @@ function sendToBridge(message: Record<string, unknown>): Promise<void> {
         resolve();
       });
     });
-    // 전달 실패해도 tool 자체는 성공 응답 (모델이 멈추지 않도록)
+    // Resolve successfully even on transmission failure to avoid stalling the model.
     client.on('error', () => resolve());
   });
 }

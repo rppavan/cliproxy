@@ -9,17 +9,13 @@ import type { HealthChecker } from '../../services/health-checker.js';
 import type { QueueManager } from '../../services/queue.js';
 import { HttpProvider } from '../../providers/http-provider.js';
 
-// DB 키 접두사
 const HTTP_PROVIDER_PREFIX = 'http_provider:';
 const PROVIDER_CONFIG_PREFIX = 'provider_config:';
 
-// 빌트인 프로바이더 이름 (사용 불가)
 const BUILTIN_PROVIDER_NAMES = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi', 'opencode'];
 
-// 프로바이더 이름 유효성 검사 패턴: 소문자·숫자·하이픈, 길이 2-30
 const PROVIDER_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
-// base_url 유효성 검사
 function validateBaseUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -42,7 +38,6 @@ function validateProviderName(name: string): string | null {
   return null;
 }
 
-// DB 헬퍼
 async function loadHttpProviderFromDb(name: string): Promise<HttpProviderConfig | null> {
   const db = getDatabase();
   const key = `${HTTP_PROVIDER_PREFIX}${name}`;
@@ -88,10 +83,9 @@ interface HttpProviderDeps {
   queueManager: QueueManager;
 }
 
-// ── 엔드포인트 타입 자동 감지 ────────────────────────────────
-// base_url에 최소 요청을 보내 어떤 엔드포인트가 실제로 응답하는지 판별한다.
-// chat/embeddings/rerank만 실제 프로빙(저비용). images/tts는 생성 비용이 커서
-// 수동 선택 + 이름 휴리스틱에 맡긴다.
+// Probes base_url with minimal requests to determine supported endpoints.
+// Only probes chat, embeddings, and rerank due to low cost; images and TTS have higher generation costs
+// and rely on manual selection or name heuristics instead.
 interface ProbeOutcome {
   type: EndpointType;
   ok: boolean;
@@ -141,20 +135,19 @@ async function detectEndpointType(
   };
   const m = model || 'detect-probe';
 
-  // record 형태 안전 접근
   const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? v as Record<string, unknown> : {});
 
   const results = await Promise.all([
     probeEndpoint('embeddings', `${base}/embeddings`, { model: m, input: 'ping' }, headers, timeoutMs, (j) => {
       const data = obj(j).data;
       if (Array.isArray(data) && data.length > 0 && (obj(data[0]).embedding !== undefined)) return true;
-      // TEI native: [[...]] 형태
+      // TEI native format: [[...]]
       return Array.isArray(j) && Array.isArray((j as unknown[])[0]);
     }),
-    // Cohere(documents) / TEI(texts) 양쪽 형식을 함께 전송
+    // Send both Cohere ('documents') and TEI ('texts') schema formats
     probeEndpoint('rerank', `${base}/rerank`, { model: m, query: 'ping', documents: ['a', 'b'], texts: ['a', 'b'], top_n: 2 }, headers, timeoutMs, (j) => {
       if (Array.isArray(obj(j).results) || Array.isArray(obj(j).data)) return true;
-      // TEI native: [{index, score}, ...] 형태
+      // TEI native format: [{index, score}, ...]
       return Array.isArray(j) && obj((j as unknown[])[0]).score !== undefined;
     }),
     probeEndpoint('chat', `${base}/chat/completions`, { model: m, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }, headers, timeoutMs, (j) => {
@@ -162,14 +155,14 @@ async function detectEndpointType(
     }),
   ]);
 
-  // 특수 타입(rerank/embeddings) 우선, 그다음 chat
+  // Prioritize specialized endpoints (rerank/embeddings) before fallback to chat
   const priority: EndpointType[] = ['rerank', 'embeddings', 'chat'];
   for (const p of priority) {
     const hit = results.find((r) => r.type === p && r.ok);
     if (hit) return { detected: p, source: 'probe', results };
   }
 
-  // 프로빙 실패 → 이름 휴리스틱
+  // Fall back to heuristic matching on probe failure
   const heuristic = inferEndpointTypeFromName(model);
   if (heuristic) return { detected: heuristic, source: 'heuristic', results };
 
@@ -180,7 +173,6 @@ export function registerHttpProviderRoutes(
   app: FastifyInstance,
   deps: HttpProviderDeps,
 ): void {
-  // 전체 HTTP 프로바이더 목록 조회
   app.get('/admin/http-providers', async (_request, reply) => {
     const db = getDatabase();
     const rows = await db
@@ -201,7 +193,6 @@ export function registerHttpProviderRoutes(
     return reply.send(providers);
   });
 
-  // 특정 HTTP 프로바이더 설정 조회
   app.get<{ Params: { name: string } }>(
     '/admin/http-providers/:name',
     async (request, reply) => {
@@ -218,13 +209,11 @@ export function registerHttpProviderRoutes(
     },
   );
 
-  // HTTP 프로바이더 생성
   app.post<{ Body: { name: string } & Partial<HttpProviderConfig> }>(
     '/admin/http-providers',
     async (request, reply) => {
       const { name, ...configData } = request.body;
 
-      // 이름 유효성 검사
       if (!name) {
         return reply.status(400).send({ error: { message: 'Provider name is required.' } });
       }
@@ -233,21 +222,18 @@ export function registerHttpProviderRoutes(
         return reply.status(400).send({ error: { message: nameError } });
       }
 
-      // 빌트인 이름 충돌
       if (BUILTIN_PROVIDER_NAMES.includes(name)) {
         return reply.status(409).send({
           error: { message: `Cannot use built-in provider name: "${name}".` },
         });
       }
 
-      // 이미 등록된 프로바이더 이름 확인
       if (deps.registry.has(name)) {
         return reply.status(409).send({
           error: { message: `Provider "${name}" is already registered.` },
         });
       }
 
-      // base_url 유효성 검사
       if (!configData.base_url) {
         return reply.status(400).send({ error: { message: 'base_url is required.' } });
       }
@@ -269,22 +255,18 @@ export function registerHttpProviderRoutes(
         ...(configData.description !== undefined && { description: configData.description }),
       };
 
-      // DB에 저장
       await saveHttpProviderToDb(name, config);
 
-      // 런타임 등록
       const provider = new HttpProvider(name, config);
       deps.registry.register(provider);
       deps.queueManager.addQueue(name, config.max_concurrent);
 
-      // 비동기 헬스 체크
       deps.healthChecker.checkProvider(name).catch(() => {});
 
       return reply.status(201).send({ name, config });
     },
   );
 
-  // HTTP 프로바이더 설정 수정
   app.put<{ Params: { name: string }; Body: Partial<HttpProviderConfig> }>(
     '/admin/http-providers/:name',
     async (request, reply) => {
@@ -298,7 +280,6 @@ export function registerHttpProviderRoutes(
         });
       }
 
-      // base_url 변경 시 유효성 검사
       if (partial.base_url !== undefined) {
         const urlError = validateBaseUrl(partial.base_url);
         if (urlError) {
@@ -309,7 +290,7 @@ export function registerHttpProviderRoutes(
       const updated: HttpProviderConfig = { ...existing, ...partial };
       await saveHttpProviderToDb(name, updated);
 
-      // 구조적 변경 여부 (base_url, api_key, custom_headers 변경 시 재등록)
+      // Re-register provider when structural connection fields change
       const structuralFields: Array<keyof HttpProviderConfig> = [
         'base_url', 'api_key', 'custom_headers',
       ];
@@ -322,7 +303,6 @@ export function registerHttpProviderRoutes(
         const newProvider = new HttpProvider(name, updated);
         deps.registry.register(newProvider);
       } else if (deps.registry.has(name)) {
-        // HttpProvider의 httpConfig도 업데이트
         const provider = deps.registry.get(name);
         if (provider instanceof HttpProvider) {
           provider.updateHttpConfig(partial);
@@ -337,7 +317,6 @@ export function registerHttpProviderRoutes(
     },
   );
 
-  // HTTP 프로바이더 삭제
   app.delete<{ Params: { name: string } }>(
     '/admin/http-providers/:name',
     async (request, reply) => {
@@ -371,7 +350,6 @@ export function registerHttpProviderRoutes(
     },
   );
 
-  // 등록 전 테스트 — 임시 HttpProvider로 실행
   app.post<{ Body: { name?: string } & Partial<HttpProviderConfig> }>(
     '/admin/http-providers/test',
     async (request, reply) => {
@@ -403,7 +381,7 @@ export function registerHttpProviderRoutes(
       const startTime = Date.now();
 
       try {
-        // 엔드포인트 타입에 맞는 실제 호출로 테스트 (채팅 전용 테스트의 한계 해소)
+        // Test using endpoint-appropriate payloads rather than chat-only requests
         let response: string;
         let usage: unknown;
 
@@ -421,7 +399,6 @@ export function registerHttpProviderRoutes(
           const r = await testProvider.executeTts({ model, input: 'ping', voice: 'alloy' });
           response = `✓ tts: ${r.audio.length} bytes (${r.contentType})`;
         } else if (endpointType === 'images') {
-          // 이미지 생성 테스트 메서드 부재 — 자동 감지로 엔드포인트 확인 권장
           return reply.send({
             success: false,
             error: 'Image-generation test is not supported by this button yet. Use Auto-detect to verify the endpoint.',
@@ -432,7 +409,7 @@ export function registerHttpProviderRoutes(
             messages: [{ role: 'user', content: 'Say "OK" and nothing else.' }],
             model,
             stream: false,
-            // 백엔드의 max_total_tokens 제한과 무관하게 통과하도록 작은 값 사용
+            // Use small token budget to avoid hitting backend max_total_tokens constraints
             maxTokens: 64,
           });
           response = r.content.substring(0, 200);
@@ -456,7 +433,6 @@ export function registerHttpProviderRoutes(
     },
   );
 
-  // 엔드포인트 타입 자동 감지 — base_url을 프로빙해 chat/embeddings/rerank 판별
   app.post<{ Body: { name?: string } & Partial<HttpProviderConfig> }>(
     '/admin/http-providers/detect',
     async (request, reply) => {
@@ -470,7 +446,7 @@ export function registerHttpProviderRoutes(
         return reply.status(400).send({ error: { message: urlError } });
       }
 
-      // 프로브당 타임아웃: 설정값과 무관하게 10초 상한 (감지는 빠르게)
+      // Cap detection timeout at 10s regardless of configured timeout for responsive detection
       const perProbeTimeout = Math.min(configData.timeout_ms ?? 10000, 10000);
       const detection = await detectEndpointType(
         configData.base_url,

@@ -88,7 +88,6 @@ export default function ApiKeysPage() {
         </div>
       )}
 
-      {/* 생성된 키 표시 */}
       {createdKey && (
         <div className="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-3">
@@ -111,7 +110,6 @@ export default function ApiKeysPage() {
         </div>
       )}
 
-      {/* 생성 폼 */}
       {showForm && !createdKey && (
         <form onSubmit={handleCreate} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 flex gap-3 items-end">
           <div className="flex-1">
@@ -130,7 +128,6 @@ export default function ApiKeysPage() {
         </form>
       )}
 
-      {/* 키 테이블 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>

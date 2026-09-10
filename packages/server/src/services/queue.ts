@@ -1,5 +1,4 @@
 import PQueue from 'p-queue';
-// ProviderName은 string 타입
 
 export interface QueueStatus {
   pending: number;
@@ -21,7 +20,6 @@ export class QueueManager {
   ): Promise<T> {
     const queue = this.queues.get(provider);
     if (!queue) {
-      // 큐가 없으면 직접 실행
       return fn();
     }
 
@@ -42,12 +40,10 @@ export class QueueManager {
     };
   }
 
-  // 프로바이더 큐 제거 (Generic CLI 프로바이더 등록 해제 시 사용)
   removeQueue(provider: string): boolean {
     return this.queues.delete(provider);
   }
 
-  // 프로바이더 동시 처리 수 런타임 변경 (PQueue의 concurrency setter 사용)
   updateConcurrency(provider: string, concurrency: number): boolean {
     const queue = this.queues.get(provider);
     if (!queue) return false;

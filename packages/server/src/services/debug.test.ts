@@ -25,16 +25,11 @@ describe('redactSecrets', () => {
   });
 
   it('서드파티 키 형식(프롬프트 본문에 섞인 백엔드 키)을 마스킹', () => {
-    // OpenAI/Anthropic sk- (20자 이상)
     expect(redactSecrets('내 키는 sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA 입니다'))
       .not.toContain('AAAAAAAAAAAAAAAAAAAAAAAA');
-    // AWS access key id
     expect(redactSecrets('AKIAIOSFODNN7EXAMPLE')).toContain('AKIA[redacted]');
-    // Google API key (AIza + 35자)
     expect(redactSecrets('AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe')).toContain('AIza[redacted]');
-    // GitHub token
     expect(redactSecrets('ghp_0123456789012345678901234567890123456789')).toContain('gh_[redacted]');
-    // xAI key
     expect(redactSecrets('xai-0123456789abcdefghij')).toContain('xai-[redacted]');
   });
 

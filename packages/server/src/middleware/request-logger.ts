@@ -46,7 +46,7 @@ export async function logRequest(entry: LogEntry): Promise<void> {
       requestHash: entry.requestHash,
     });
   } catch (err) {
-    // 로깅 실패가 요청을 중단시키지 않도록
+    // Suppress error so logging failure does not interrupt the request.
     console.error('Failed to log request:', err);
   }
 }
