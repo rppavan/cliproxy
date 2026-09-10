@@ -67,6 +67,12 @@ import { seedDatabase } from './db/seed.js';
 import { loadPlugins } from './plugins/plugin-loader.js';
 import type { ValidationConfig } from '@star-cliproxy/shared';
 
+export function isAiRequest(url?: string): boolean {
+  if (!url) return false;
+  const pathname = url.split('?')[0];
+  return pathname.startsWith('/v1') || pathname === '/admin/test-model';
+}
+
 export async function createApp(config: AppConfig, projectRoot?: string) {
   // Admin API auth check (only required when auth is enabled)
   if (config.auth.enabled && !config.auth.adminToken) {
@@ -173,6 +179,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
   // Fastify 앱
   const app = Fastify({
     bodyLimit: config.validation.bodyLimitBytes,
+    disableRequestLogging: true,
     logger: {
       level: 'info',
       transport: {
@@ -180,6 +187,36 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
         options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
       },
     },
+  });
+
+  // 선별적 요청 로깅:
+  // - AI 요청(/v1/*, /admin/test-model)은 항상 로깅(incoming + completed)
+  // - 기타 요청(하트비트 /health, 대시보드 폴링, 정적 파일 서빙 등)은 정상 시 생략하고 에러(4xx/5xx) 발생 시에만 로깅
+  app.addHook('onRequest', async (request) => {
+    if (isAiRequest(request.url)) {
+      request.log.info({ req: request }, 'incoming request');
+    }
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const isAi = isAiRequest(request.url);
+    if (isAi) {
+      if (reply.statusCode >= 500) {
+        request.log.error({ res: reply, responseTime: reply.elapsedTime }, 'request completed');
+      } else if (reply.statusCode >= 400) {
+        request.log.warn({ res: reply, responseTime: reply.elapsedTime }, 'request completed');
+      } else {
+        request.log.info({ res: reply, responseTime: reply.elapsedTime }, 'request completed');
+      }
+    } else if (reply.statusCode >= 500) {
+      request.log.error({ req: request, res: reply, responseTime: reply.elapsedTime }, 'request completed with error');
+    } else if (reply.statusCode >= 400) {
+      request.log.warn({ req: request, res: reply, responseTime: reply.elapsedTime }, 'request completed with error');
+    }
+  });
+
+  app.addHook('onError', async (request, reply, error) => {
+    request.log.error({ err: error, req: request, res: reply }, 'request error');
   });
 
   // CORS: ["*"]이면 모든 origin 허용 (로컬 프록시용), 아니면 지정된 origin만 허용
