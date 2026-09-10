@@ -41,12 +41,32 @@ async function main() {
   }
 
   // 우아한 종료
+  let isShuttingDown = false;
+
   const shutdown = async () => {
+    if (isShuttingDown) {
+      console.log('\nForce exiting...');
+      process.exit(1);
+    }
+    isShuttingDown = true;
     console.log('\nShutting down...');
-    killAllChildProcesses();
-    await app.close();
-    closeDatabase();
-    process.exit(0);
+
+    // 2초 내에 종료되지 않으면 강제 종료 (tsx의 5초 타임아웃보다 먼저 안전하게 종료)
+    const forceExitTimer = setTimeout(() => {
+      console.error('Shutdown timed out after 2s, force exiting...');
+      process.exit(1);
+    }, 2000);
+    forceExitTimer.unref();
+
+    try {
+      killAllChildProcesses();
+      await app.close();
+      closeDatabase();
+    } catch (err) {
+      console.error('Error during shutdown:', err);
+    } finally {
+      process.exit(0);
+    }
   };
 
   process.on('SIGINT', shutdown);

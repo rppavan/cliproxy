@@ -48,6 +48,7 @@ import { registerApiKeysRoutes } from './routes/admin/api-keys.js';
 import { registerStatsRoutes } from './routes/admin/stats.js';
 import { registerProvidersRoutes, sanitizeRuntimeProviderConfig } from './routes/admin/providers.js';
 import { registerChannelBridgeRoutes, maybeAutoStartBridge } from './routes/admin/channel-bridge.js';
+import { channelBridgeManager } from './channel-bridge/manager.js';
 import { registerTestModelRoute } from './routes/admin/test-model.js';
 import { registerRateLimitsRoutes, loadRateLimitsFromDb } from './routes/admin/rate-limits.js';
 import { loadProviderConfigFromDb } from './routes/admin/providers.js';
@@ -178,6 +179,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
 
   // Fastify 앱
   const app = Fastify({
+    forceCloseConnections: true,
     bodyLimit: config.validation.bodyLimitBytes,
     disableRequestLogging: true,
     logger: {
@@ -544,6 +546,7 @@ export async function createApp(config: AppConfig, projectRoot?: string) {
     healthChecker.stop();
     await rateLimiter.destroy();
     clearInterval(cacheCleanupTimer);
+    await channelBridgeManager.stop();
   });
 
   // SPA fallback 및 404 핸들러

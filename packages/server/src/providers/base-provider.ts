@@ -323,15 +323,24 @@ export abstract class BaseProvider {
 // SIGTERM 후 일정 시간이 지나도 종료되지 않으면 SIGKILL로 강제 종료
 // zombie 프로세스 누적 방지용 헬퍼
 export function gracefulKill(child: ChildProcess, timeoutMs = 3000): void {
-  if (child.killed) return;
-  child.kill('SIGTERM');
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    return;
+  }
   const killTimer = setTimeout(() => {
-    if (!child.killed) {
-      child.kill('SIGKILL');
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // 이미 종료된 경우 무시
+      }
     }
   }, timeoutMs);
+  killTimer.unref?.();
   // 프로세스가 정상 종료되면 타이머 취소
-  child.on('close', () => clearTimeout(killTimer));
+  child.once('close', () => clearTimeout(killTimer));
 }
 
 // 간이 토큰 추정 (문자수 / 4)
